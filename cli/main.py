@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+import click, requests, json, sys
+
+API = "http://localhost:8000"
+
+def api(method, path, **kwargs):
+    try:
+        r = getattr(requests, method)(f"{API}{path}", **kwargs)
+        return r.json()
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+@click.group()
+def cli():
+    """myplatform — Mini Heroku CLI"""
+    pass
+
+@cli.command()
+@click.argument("name")
+@click.argument("repo_url")
+def deploy(name, repo_url):
+    """Deploy an app from a git repo"""
+    click.echo(f"-----> Deploying {name}...")
+    r = api("post", "/apps/deploy",
+            json={"name": name, "repo_url": repo_url})
+    if r.get("status") == "deployed":
+        click.echo(f"-----> Deploy successful!")
+        click.echo(f"-----> Version: v{r['version']}")
+        click.echo(f"-----> URL: https://{name}.68.221.16.224.sslip.io")
+    else:
+        click.echo(f"-----> Deploy failed: {r}", err=True)
+        sys.exit(1)
+
+@cli.command()
+@click.argument("name")
+@click.option("-f", "--follow", is_flag=True, help="Stream logs")
+@click.option("-n", "--tail", default=50, help="Number of lines")
+def logs(name, follow, tail):
+    """Stream logs from an app"""
+    import urllib.request
+    url = f"{API}/apps/{name}/logs?follow={str(follow).lower()}&tail={tail}"
+    try:
+        with urllib.request.urlopen(url) as r:
+            for line in r:
+                decoded = line.decode().strip()
+                if decoded.startswith("data: "):
+                    click.echo(decoded[6:])
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+
+@cli.command("config:set")
+@click.argument("name")
+@click.argument("kvpairs", nargs=-1)
+def config_set(name, kvpairs):
+    """Set env vars: myplatform config:set myapp KEY=VALUE"""
+    for kv in kvpairs:
+        if "=" not in kv:
+            click.echo(f"Invalid format: {kv} (use KEY=VALUE)", err=True)
+            continue
+        key, value = kv.split("=", 1)
+        r = api("put", f"/apps/{name}/config",
+                json={"key": key, "value": value})
+        click.echo(f"-----> Set {key}")
+
+@cli.command("config:get")
+@click.argument("name")
+def config_get(name):
+    """Get env vars for an app"""
+    r = api("get", f"/apps/{name}/config")
+    for k, v in r.items():
+        click.echo(f"{k}={v}")
+
+@cli.command("config:unset")
+@click.argument("name")
+@click.argument("key")
+def config_unset(name, key):
+    """Remove an env var"""
+    r = api("delete", f"/apps/{name}/config/{key}")
+    click.echo(f"-----> Unset {key}")
+
+@cli.command()
+@click.argument("name")
+@click.argument("scale_spec")
+def scale(name, scale_spec):
+    """Scale an app: myplatform scale myapp web=3"""
+    try:
+        replicas = int(scale_spec.split("=")[1])
+    except:
+        click.echo("Format: web=N", err=True)
+        sys.exit(1)
+    r = api("post", f"/apps/{name}/scale", json={"replicas": replicas})
+    click.echo(f"-----> Scaled {name} to {replicas} replicas")
+    click.echo(f"-----> Ports: {r.get('ports', [])}")
+
+@cli.command()
+@click.argument("name")
+def restart(name):
+    """Restart an app"""
+    r = api("post", f"/apps/{name}/restart")
+    click.echo(f"-----> Restarted {name}")
+
+@cli.command()
+@click.argument("name")
+def ps(name):
+    """List running containers for an app"""
+    r = api("get", f"/apps/{name}/ps")
+    for c in r:
+        click.echo(f"{c['name']}\t{c['status']}")
+
+@cli.command()
+@click.argument("name")
+def info(name):
+    """Show app details"""
+    r = api("get", f"/apps/{name}")
+    click.echo(f"App:      {r['name']}")
+    click.echo(f"Status:   {r['status']}")
+    click.echo(f"Port:     {r['port']}")
+    click.echo(f"Replicas: {r.get('replicas', 1)}")
+    click.echo(f"Image:    {r['image']}")
+    click.echo(f"URL:      https://{r['name']}.68.221.16.224.sslip.io")
+
+@cli.command()
+@click.argument("name")
+def releases(name):
+    """List releases for an app"""
+    r = api("get", f"/apps/{name}/releases")
+    for rel in r:
+        click.echo(f"v{rel['version']}\t{rel['deployed_at']}\t{rel['image']}")
+
+@cli.command()
+@click.argument("name")
+@click.argument("version", type=int)
+def rollback(name, version):
+    """Rollback to a previous release"""
+    click.echo(f"-----> Rolling back {name} to v{version}...")
+    r = api("post", f"/apps/{name}/rollback?version={version}")
+    click.echo(f"-----> Rolled back to v{version}")
+
+@cli.command("metrics")
+@click.argument("name")
+def metrics(name):
+    """Show CPU and memory metrics"""
+    r = api("get", f"/apps/{name}/metrics")
+    click.echo(f"CPU:    {r['cpu_percent']}%")
+    click.echo(f"Memory: {r['memory_mb']}MB / {r['memory_limit_mb']}MB ({r['memory_percent']}%)")
+
+@cli.command("list")
+def list_apps():
+    """List all apps"""
+    r = api("get", "/apps")
+    if not r:
+        click.echo("No apps deployed.")
+        return
+    for a in r:
+        click.echo(f"{a['name']}\t{a['status']}\tport:{a['port']}")
+
+if __name__ == "__main__":
+    cli()
