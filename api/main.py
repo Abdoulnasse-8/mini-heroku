@@ -258,3 +258,12 @@ def ps(name: str):
         filters={"name": f"app-{name}"})
     return [{"name": c.name, "status": c.status,
              "ports": c.ports} for c in containers]
+
+# ── WEB UI ───────────────────────────────────────────────
+from api.ui import router as ui_router
+app.include_router(ui_router)
+
+@app.get("/")
+def root():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/ui/")

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+    <h2>📦 Applications ({{ apps|length }})</h2>
+    <a href="/ui/deploy" class="btn btn-primary">+ Deploy New App</a>
+</div>
+
+{% if apps %}
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Replicas</th>
+                <th>URL</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for app in apps %}
+            <tr>
+                <td><span class="app-name">{{ app.name }}</span></td>
+                <td><span class="badge badge-{{ app.status }}">{{ app.status }}</span></td>
+                <td>{{ app.replicas }}</td>
+                <td><a href="https://{{ app.name }}.68.221.16.224.sslip.io" target="_blank" class="url-link">{{ app.name }}.68.221.16.224.sslip.io</a></td>
+                <td>
+                    <a href="/ui/apps/{{ app.name }}" class="btn btn-secondary">View</a>
+                    <button class="btn btn-primary" hx-post="/ui/apps/{{ app.name }}/restart" hx-target="body" hx-swap="none" onclick="location.reload()">Restart</button>
+                    <button class="btn btn-danger" hx-post="/ui/apps/{{ app.name }}/stop" hx-target="body" hx-swap="none" onclick="location.reload()">Stop</button>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card" style="text-align:center; padding:3rem; color:#888;">
+    <p style="font-size:1.2rem;">No apps deployed yet.</p>
+    <a href="/ui/deploy" class="btn btn-primary" style="margin-top:1rem;">Deploy your first app</a>
+</div>
+{% endif %}
+{% endblock %}

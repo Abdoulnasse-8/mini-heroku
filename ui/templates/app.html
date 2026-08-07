@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+    <div>
+        <h2>{{ app.name }} <span class="badge badge-{{ app.status }}">{{ app.status }}</span></h2>
+        <a href="https://{{ app.name }}.68.221.16.224.sslip.io" target="_blank" class="url-link">https://{{ app.name }}.68.221.16.224.sslip.io ↗</a>
+    </div>
+    <div class="flex">
+        <button class="btn btn-primary" onclick="location.href='/ui/apps/{{ app.name }}/redeploy'">🔄 Redeploy</button>
+        <button class="btn btn-secondary" onclick="location.reload()">↻ Refresh</button>
+    </div>
+</div>
+
+<div class="grid-2">
+    <!-- Métriques -->
+    <div class="card">
+        <h2>📊 Metrics</h2>
+        {% if metrics %}
+        <p>CPU: <strong>{{ metrics.cpu_percent }}%</strong></p>
+        <div class="metric-bar mt-1"><div class="metric-fill" style="width:{{ [metrics.cpu_percent, 100]|min }}%"></div></div>
+        <p style="margin-top:0.8rem">Memory: <strong>{{ metrics.memory_mb }}MB / {{ metrics.memory_limit_mb }}MB ({{ metrics.memory_percent }}%)</strong></p>
+        <div class="metric-bar mt-1"><div class="metric-fill" style="width:{{ metrics.memory_percent }}%"></div></div>
+        {% else %}
+        <p style="color:#888">App is stopped — no metrics available.</p>
+        {% endif %}
+    </div>
+
+    <!-- Scaling -->
+    <div class="card">
+        <h2>⚖️ Scaling</h2>
+        <p>Current replicas: <strong>{{ app.replicas }}</strong></p>
+        <div class="flex mt-1">
+            <input type="number" id="replicas" value="{{ app.replicas }}" min="1" max="5" style="width:70px">
+            <button class="btn btn-primary" onclick="scaleApp()">Scale</button>
+        </div>
+        <script>
+        function scaleApp() {
+            const n = document.getElementById('replicas').value;
+            fetch('/ui/apps/{{ app.name }}/scale', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({replicas: parseInt(n)})
+            }).then(() => location.reload());
+        }
+        </script>
+    </div>
+</div>
+
+<div class="grid-2">
+    <!-- Env vars -->
+    <div class="card">
+        <h2>🔧 Environment Variables</h2>
+        {% for key, val in config.items() %}
+        <div class="flex mt-1">
+            <code style="flex:1; background:#f8f9fa; padding:4px 8px; border-radius:4px; font-size:0.85rem;">{{ key }} = {{ val }}</code>
+            <button class="btn btn-danger" onclick="unsetVar('{{ key }}')">✕</button>
+        </div>
+        {% endfor %}
+        <div class="flex" style="margin-top:0.8rem">
+            <input type="text" id="env-key" placeholder="KEY" style="width:120px">
+            <input type="text" id="env-val" placeholder="value">
+            <button class="btn btn-success" onclick="setVar()">Add</button>
+        </div>
+        <script>
+        function setVar() {
+            const k = document.getElementById('env-key').value;
+            const v = document.getElementById('env-val').value;
+            fetch('/ui/apps/{{ app.name }}/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({key: k, value: v})
+            }).then(() => location.reload());
+        }
+        function unsetVar(key) {
+            fetch('/ui/apps/{{ app.name }}/config/' + key, {method: 'DELETE'})
+            .then(() => location.reload());
+        }
+        </script>
+    </div>
+
+    <!-- Releases -->
+    <div class="card">
+        <h2>🚀 Releases</h2>
+        {% for r in releases %}
+        <div class="flex mt-1" style="justify-content:space-between">
+            <span><strong>v{{ r.version }}</strong> — {{ r.deployed_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            {% if not loop.last %}
+            <button class="btn btn-secondary" onclick="rollback({{ r.version }})" style="padding:2px 8px; font-size:0.75rem">Rollback</button>
+            {% else %}
+            <span class="badge badge-running">current</span>
+            {% endif %}
+        </div>
+        {% endfor %}
+        <script>
+        function rollback(v) {
+            fetch('/ui/apps/{{ app.name }}/rollback/' + v, {method: 'POST'})
+            .then(() => location.reload());
+        }
+        </script>
+    </div>
+</div>
+
+<!-- Logs -->
+<div class="card">
+    <h2>📋 Logs <button class="btn btn-secondary" onclick="loadLogs()" style="margin-left:0.5rem">↻ Refresh</button></h2>
+    <pre id="log-output">Loading logs...</pre>
+    <script>
+    function loadLogs() {
+        const pre = document.getElementById('log-output');
+        pre.textContent = 'Loading...';
+        fetch('/ui/apps/{{ app.name }}/logs')
+        .then(r => r.text())
+        .then(t => {
+            const lines = t.split('\n')
+                .filter(l => l.startsWith('data: '))
+                .map(l => l.slice(6));
+            pre.textContent = lines.join('\n') || '(no logs)';
+            pre.scrollTop = pre.scrollHeight;
+        });
+    }
+    loadLogs();
+    setInterval(loadLogs, 5000);
+    </script>
+</div>
+{% endblock %}
