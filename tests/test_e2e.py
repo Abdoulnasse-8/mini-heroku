@@ -1,7 +1,7 @@
 import pytest, requests, time
 
 API = "http://localhost:8000"
-APP_NAME = "test-e2e"
+APP_NAME = f"e2e-{int(time.time())}"  # app unique par run (isolation multi-user)
 REPO_URL = "/opt/git-repos/hello-world.git"
 EMAIL = "e2e@test.local"
 PASSWORD = "e2epassword"
