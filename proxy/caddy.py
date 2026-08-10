@@ -15,7 +15,8 @@ def update_caddyfile(apps: list[dict]):
     for app in apps:
         hostnames = [f"{app['name']}.{BASE_DOMAIN}"]
         hostnames += app.get("domains", [])
-        site_line = "\n".join(hostnames)
+        # Caddy exige une virgule entre plusieurs hostnames d'un même site
+        site_line = ", ".join(hostnames)
         block = f"""
 {site_line} {{
     reverse_proxy localhost:{app['port']}
@@ -59,7 +60,7 @@ def update_caddyfile_replicas(app_name: str, ports: list[int], domains: list[str
     # Ajouter le nouveau bloc avec load balancing
     hostnames = [f"{app_name}.{BASE_DOMAIN}"]
     hostnames += domains or []
-    site_line = "\n".join(hostnames)
+    site_line = ", ".join(hostnames)
     new_block = f"""
 {site_line} {{
     reverse_proxy {upstreams}
