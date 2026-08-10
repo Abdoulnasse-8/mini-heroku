@@ -157,5 +157,20 @@ def list_apps():
     for a in r:
         click.echo(f"{a['name']}\t{a['status']}\tport:{a['port']}")
 
+
+@cli.command("deploy:zero-downtime")
+@click.argument("name")
+def deploy_zero_downtime(name):
+    """Zero-downtime blue-green deploy"""
+    click.echo(f"-----> Starting blue-green deploy for {name}...")
+    r = api("post", f"/apps/{name}/deploy-zero-downtime")
+    if r.get("status") == "deployed":
+        click.echo(f"-----> Blue-green deploy successful!")
+        click.echo(f"-----> Old port: {r['old_port']} -> New port: {r['new_port']}")
+        click.echo(f"-----> Downtime: {r['downtime']}")
+        click.echo(f"-----> URL: https://{name}.68.221.16.224.sslip.io")
+    else:
+        click.echo(f"-----> Deploy failed: {r}", err=True)
+
 if __name__ == "__main__":
     cli()

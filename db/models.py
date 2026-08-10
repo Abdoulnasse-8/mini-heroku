@@ -48,3 +48,12 @@ def get_db():
         yield db
     finally:
         db.close()
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    action     = Column(String)      # deploy, scale, restart, config:set...
+    app_name   = Column(String)
+    details    = Column(Text)        # JSON details
+    status     = Column(String)      # success, error
+    created_at = Column(DateTime, default=datetime.utcnow)

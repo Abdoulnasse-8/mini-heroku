@@ -5,7 +5,7 @@ from pydantic import BaseModel
 import sys, socket, docker as docker_sdk
 sys.path.insert(0, "/home/azureuser/mini-heroku")
 
-from db.models import init_db, get_db, App, Release, EnvVar
+from db.models import init_db, get_db, SessionLocal, App, Release, EnvVar
 from builder.build import build_and_push
 from runner.run import run_container, stop_container, get_container_status
 from proxy.caddy import update_caddyfile, update_caddyfile_replicas
@@ -79,6 +79,7 @@ def deploy(req: DeployRequest, db: Session = Depends(get_db)):
     db.commit()
     all_apps = db.query(App).filter(App.status == "running").all()
     update_caddyfile([{"name": a.name, "port": a.port} for a in all_apps])
+    audit("deploy", req.name, {"version": version, "port": port, "image": image})
     return {"status": "deployed", "app": req.name, "port": port, "version": version}
 
 # ── LIST + GET ───────────────────────────────────────────
@@ -203,6 +204,7 @@ def scale(name: str, req: ScaleRequest, db: Session = Depends(get_db)):
     a.replicas = req.replicas
     db.commit()
     update_caddyfile_replicas(name, ports)
+    audit("scale", name, {"replicas": req.replicas, "ports": ports})
     return {"status": "scaled", "app": name, "replicas": req.replicas, "ports": ports}
 
 # ── RESTART ──────────────────────────────────────────────
@@ -213,6 +215,7 @@ def restart(name: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "App not found")
     env_vars = get_env_vars(name, db)
     port = run_container(name, a.image, env_vars, a.port)
+    audit("restart", name, {"port": port})
     return {"status": "restarted", "app": name, "port": port}
 
 # ── STOP ─────────────────────────────────────────────────
@@ -223,6 +226,7 @@ def stop(name: str, db: Session = Depends(get_db)):
     if a:
         a.status = "stopped"
         db.commit()
+    audit("stop", name, {})
     return {"status": "stopped", "app": name}
 
 # ── RELEASES ─────────────────────────────────────────────
@@ -267,3 +271,157 @@ app.include_router(ui_router)
 def root():
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/ui/")
+
+# ── AUDIT LOG ────────────────────────────────────────────
+import json as _json
+from db.models import AuditLog
+
+def audit(action: str, app_name: str, details: dict, status: str = "success"):
+    db = SessionLocal()
+    try:
+        log = AuditLog(
+            action=action,
+            app_name=app_name,
+            details=_json.dumps(details),
+            status=status
+        )
+        db.add(log)
+        db.commit()
+    finally:
+        db.close()
+
+@app.get("/audit")
+def get_audit_log(limit: int = 50, db: Session = Depends(get_db)):
+    logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).all()
+    return [{
+        "id": l.id,
+        "action": l.action,
+        "app": l.app_name,
+        "details": _json.loads(l.details) if l.details else {},
+        "status": l.status,
+        "timestamp": str(l.created_at)
+    } for l in logs]
+
+@app.get("/audit/{app_name}")
+def get_app_audit(app_name: str, db: Session = Depends(get_db)):
+    logs = db.query(AuditLog).filter(
+        AuditLog.app_name == app_name
+    ).order_by(AuditLog.created_at.desc()).limit(20).all()
+    return [{
+        "action": l.action,
+        "details": _json.loads(l.details) if l.details else {},
+        "status": l.status,
+        "timestamp": str(l.created_at)
+    } for l in logs]
+
+# ── ZERO-DOWNTIME DEPLOY (Blue-Green) ────────────────────
+@app.post("/apps/{name}/deploy-zero-downtime")
+def deploy_zero_downtime(name: str, db: Session = Depends(get_db)):
+    """Blue-green deploy — nouvelle version sans coupure"""
+    a = db.query(App).filter(App.name == name).first()
+    if not a:
+        raise HTTPException(404, "App not found")
+
+    # Récupérer la dernière release
+    latest = db.query(Release).filter(
+        Release.app_name == name
+    ).order_by(Release.version.desc()).first()
+    if not latest:
+        raise HTTPException(404, "No releases found")
+
+    env_vars = get_env_vars(name, db)
+
+    # 1. Lancer le nouveau container (green) sur un nouveau port
+    green_port = get_free_port()
+    green_name = f"app-{name}-green"
+    try:
+        old = docker_client.containers.get(green_name)
+        old.stop(); old.remove()
+    except:
+        pass
+
+    docker_client.containers.run(
+        latest.image,
+        name=green_name,
+        detach=True,
+        ports={"8000/tcp": green_port},
+        environment=env_vars,
+        mem_limit="512m",
+        nano_cpus=500_000_000,
+        restart_policy={"Name": "on-failure", "MaximumRetryCount": 3}
+    )
+    print(f"[blue-green] Green container started on port {green_port}")
+
+    # 2. Health check du nouveau container (max 30s)
+    import time as _time
+    import requests as _requests
+    healthy = False
+    for i in range(15):
+        _time.sleep(2)
+        try:
+            r = _requests.get(f"http://localhost:{green_port}", timeout=2)
+            if r.status_code < 500:
+                healthy = True
+                print(f"[blue-green] Green healthy after {(i+1)*2}s")
+                break
+        except:
+            print(f"[blue-green] Waiting for green... ({(i+1)*2}s)")
+
+    if not healthy:
+        # Rollback — stopper le green et garder le blue
+        try:
+            docker_client.containers.get(green_name).stop()
+            docker_client.containers.get(green_name).remove()
+        except:
+            pass
+        audit("deploy-zero-downtime", name, {"error": "green unhealthy"}, "error")
+        raise HTTPException(500, "New version failed health check — keeping old version")
+
+    # 3. Basculer Caddy vers le green
+    old_port = a.port
+    old_name = f"app-{name}-blue"
+
+    # Renommer l'ancien en blue
+    try:
+        blue = docker_client.containers.get(f"app-{name}")
+        blue.rename(old_name)
+    except:
+        pass
+
+    # Renommer le green en production
+    try:
+        green = docker_client.containers.get(green_name)
+        green.rename(f"app-{name}")
+    except:
+        pass
+
+    # Mettre à jour Caddy avec le nouveau port
+    a.port = green_port
+    db.commit()
+    all_apps = db.query(App).filter(App.status == "running").all()
+    update_caddyfile([{"name": ap.name, "port": ap.port} for ap in all_apps])
+
+    # 4. Stopper l'ancien container (blue) après la bascule
+    _time.sleep(2)
+    try:
+        blue = docker_client.containers.get(old_name)
+        blue.stop()
+        blue.remove()
+        print(f"[blue-green] Blue container stopped")
+    except:
+        pass
+
+    audit("deploy-zero-downtime", name, {
+        "old_port": old_port,
+        "new_port": green_port,
+        "image": latest.image
+    })
+
+    return {
+        "status": "deployed",
+        "strategy": "blue-green",
+        "app": name,
+        "old_port": old_port,
+        "new_port": green_port,
+        "downtime": "0s"
+    }
