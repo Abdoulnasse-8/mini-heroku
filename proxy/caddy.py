@@ -1,14 +1,23 @@
 import subprocess
+import os
 
-CADDYFILE = "/etc/caddy/Caddyfile"
-BASE_DOMAIN = "68.221.16.224.sslip.io"
+CADDYFILE = os.environ.get("MINIHEROKU_CADDYFILE", "/etc/caddy/Caddyfile")
+BASE_DOMAIN = os.environ.get("MINIHEROKU_BASE_DOMAIN", "68.221.16.224.sslip.io")
+
+def _reload():
+    if os.environ.get("MINIHEROKU_CADDY_RELOAD", "1") != "0":
+        subprocess.run(["sudo", "/usr/bin/systemctl", "reload", "caddy"],
+                       check=True)
 
 def update_caddyfile(apps: list[dict]):
-    """apps = [{"name": "myapp", "port": 3001}, ...]"""
+    """apps = [{"name": "myapp", "port": 3001, "domains": ["app.example.com"]}, ...]"""
     blocks = []
     for app in apps:
+        hostnames = [f"{app['name']}.{BASE_DOMAIN}"]
+        hostnames += app.get("domains", [])
+        site_line = "\n".join(hostnames)
         block = f"""
-{app['name']}.{BASE_DOMAIN} {{
+{site_line} {{
     reverse_proxy localhost:{app['port']}
 }}
 """
@@ -17,13 +26,13 @@ def update_caddyfile(apps: list[dict]):
     content = "\n".join(blocks) if blocks else "# no apps deployed\n"
     with open(CADDYFILE, "w") as f:
         f.write(content)
-    subprocess.run(["sudo", "/usr/bin/systemctl", "reload", "caddy"], check=True)
+    _reload()
     print(f"[caddy] Updated with {len(apps)} apps")
 
-def update_caddyfile_replicas(app_name: str, ports: list[int]):
+def update_caddyfile_replicas(app_name: str, ports: list[int], domains: list[str] = None):
     """Load balance across multiple replicas"""
     upstreams = " ".join([f"localhost:{p}" for p in ports])
-    
+
     # Lire le Caddyfile existant
     try:
         with open(CADDYFILE, "r") as f:
@@ -48,8 +57,11 @@ def update_caddyfile_replicas(app_name: str, ports: list[int]):
         new_lines.append(line)
 
     # Ajouter le nouveau bloc avec load balancing
+    hostnames = [f"{app_name}.{BASE_DOMAIN}"]
+    hostnames += domains or []
+    site_line = "\n".join(hostnames)
     new_block = f"""
-{app_name}.{BASE_DOMAIN} {{
+{site_line} {{
     reverse_proxy {upstreams}
 }}
 """
@@ -57,5 +69,5 @@ def update_caddyfile_replicas(app_name: str, ports: list[int]):
 
     with open(CADDYFILE, "w") as f:
         f.write(new_content)
-    subprocess.run(["sudo", "/usr/bin/systemctl", "reload", "caddy"], check=True)
+    _reload()
     print(f"[caddy] Updated {app_name} with {len(ports)} replicas: {ports}")

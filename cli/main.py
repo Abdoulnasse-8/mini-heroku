@@ -1,11 +1,33 @@
 #!/usr/bin/env python3
-import click, requests, json, sys
+import click, requests, json, sys, os
 
 API = "http://localhost:8000"
+CONFIG_FILE = os.path.expanduser("~/.myplatform.json")
+
+def load_config():
+    try:
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_config(cfg):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(cfg, f)
+    os.chmod(CONFIG_FILE, 0o600)
+
+def auth_headers():
+    cfg = load_config()
+    token = cfg.get("token")
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 def api(method, path, **kwargs):
+    kwargs.setdefault("headers", {}).update(auth_headers())
     try:
         r = getattr(requests, method)(f"{API}{path}", **kwargs)
+        if r.status_code == 401:
+            click.echo("Error: not authenticated — run 'myplatform login'", err=True)
+            sys.exit(1)
         return r.json()
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
@@ -15,6 +37,42 @@ def api(method, path, **kwargs):
 def cli():
     """myplatform — Mini Heroku CLI"""
     pass
+
+# ── AUTH ─────────────────────────────────────────────────
+@cli.command()
+@click.option("--email", prompt=True)
+@click.option("--password", prompt=True, hide_input=True, confirmation_prompt=True)
+def register(email, password):
+    """Create an account"""
+    r = api("post", "/auth/register", json={"email": email, "password": password})
+    save_config({"email": r["email"], "token": r["token"]})
+    click.echo(f"-----> Registered as {r['email']}")
+
+@cli.command()
+@click.option("--email", prompt=True)
+@click.option("--password", prompt=True, hide_input=True)
+def login(email, password):
+    """Log in and store your API token"""
+    r = api("post", "/auth/login", json={"email": email, "password": password})
+    save_config({"email": r["email"], "token": r["token"]})
+    click.echo(f"-----> Logged in as {r['email']}")
+
+@cli.command()
+def logout():
+    """Remove the stored API token"""
+    save_config({})
+    click.echo("-----> Logged out")
+
+@cli.command()
+def whoami():
+    """Show the current logged-in user"""
+    cfg = load_config()
+    if not cfg.get("token"):
+        click.echo("Not logged in — run 'myplatform login'")
+        return
+    r = api("get", "/auth/me")
+    click.echo(f"Email: {r['email']}")
+    click.echo(f"Registered: {r['created_at']}")
 
 @cli.command()
 @click.argument("name")
@@ -156,6 +214,32 @@ def list_apps():
         return
     for a in r:
         click.echo(f"{a['name']}\t{a['status']}\tport:{a['port']}")
+
+# ── CUSTOM DOMAINS ───────────────────────────────────────
+@cli.command("domains")
+@click.argument("name")
+def domains(name):
+    """List custom domains for an app"""
+    r = api("get", f"/apps/{name}/domains")
+    for d in r:
+        click.echo(d)
+
+@cli.command("domains:add")
+@click.argument("name")
+@click.argument("domain")
+def domains_add(name, domain):
+    """Attach a custom domain to an app (point DNS A/AAAA to the VM IP first)"""
+    r = api("post", f"/apps/{name}/domains", json={"domain": domain})
+    click.echo(f"-----> Domain {domain} added to {name}")
+    click.echo(f"-----> Point DNS: {domain} -> 68.221.16.224 (Let's Encrypt auto)")
+
+@cli.command("domains:remove")
+@click.argument("name")
+@click.argument("domain")
+def domains_remove(name, domain):
+    """Remove a custom domain"""
+    r = api("delete", f"/apps/{name}/domains/{domain}")
+    click.echo(f"-----> Domain {domain} removed from {name}")
 
 
 @cli.command("deploy:zero-downtime")

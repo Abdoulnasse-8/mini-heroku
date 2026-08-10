@@ -45,8 +45,17 @@
 <body>
     <nav>
         <h1>⚡ Mini Heroku</h1>
-        <a href="/">Apps</a>
-        <a href="/docs" target="_blank">API Docs</a>
+        {% if user is defined and user %}
+            <a href="/ui/">Apps</a>
+            <a href="/docs" target="_blank">API Docs</a>
+            <span style="flex:1"></span>
+            <span style="font-size:0.85rem; opacity:0.9;">{{ user.email }}</span>
+            <a href="/ui/logout">Logout</a>
+        {% else %}
+            <a href="/docs" target="_blank">API Docs</a>
+            <span style="flex:1"></span>
+            <a href="/ui/login">Sign in</a>
+        {% endif %}
     </nav>
     <div class="container">
         {% block content %}{% endblock %}

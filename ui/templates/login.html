@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="max-width:380px; margin:3rem auto;">
+    <div class="card">
+        <h2 style="text-align:center; margin-bottom:1.5rem;">🔐 Sign in to Mini Heroku</h2>
+        {% if error %}
+        <p style="background:#f8d7da; color:#721c24; padding:0.6rem; border-radius:4px; font-size:0.85rem; margin-bottom:1rem;">{{ error }}</p>
+        {% endif %}
+        <form method="POST" action="/ui/login">
+            <div style="margin-bottom:0.8rem;">
+                <label style="display:block; margin-bottom:0.3rem; font-size:0.85rem; color:#666;">Email</label>
+                <input type="email" name="email" required style="width:100%;" autocomplete="email">
+            </div>
+            <div style="margin-bottom:1.2rem;">
+                <label style="display:block; margin-bottom:0.3rem; font-size:0.85rem; color:#666;">Password</label>
+                <input type="password" name="password" required style="width:100%;" autocomplete="current-password">
+            </div>
+            <button class="btn btn-primary" style="width:100%; padding:10px;" type="submit">Sign in</button>
+        </form>
+        <p style="text-align:center; margin-top:1rem; font-size:0.85rem; color:#888;">
+            New here? <a href="/ui/register" style="color:#6762a6;">Create an account</a>
+        </p>
+    </div>
+</div>
+{% endblock %}

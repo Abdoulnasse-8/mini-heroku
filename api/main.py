@@ -2,27 +2,51 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-import sys, socket, docker as docker_sdk
-sys.path.insert(0, "/home/azureuser/mini-heroku")
+import sys, socket, os, docker as docker_sdk
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 
-from db.models import init_db, get_db, SessionLocal, App, Release, EnvVar
+from db.models import (init_db, get_db, SessionLocal, App, Release, EnvVar,
+                       CustomDomain, User)
 from builder.build import build_and_push
 from runner.run import run_container, stop_container, get_container_status
 from proxy.caddy import update_caddyfile, update_caddyfile_replicas
 from cryptography.fernet import Fernet
+from api.security import (
+    get_current_user,
+    get_app_or_404,
+    hash_password,
+    verify_password,
+    create_token,
+    validate_app_name,
+    validate_repo_url,
+)
 
 app = FastAPI(title="Mini Heroku API")
 docker_client = docker_sdk.from_env()
 
-# Clé Fernet persistante
-FERNET_KEY_FILE = "/home/azureuser/mini-heroku/.fernet_key"
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    from fastapi.responses import RedirectResponse, JSONResponse
+    accept = request.headers.get("accept", "")
+    if exc.status_code in (401, 403) and "text/html" in accept:
+        return RedirectResponse(url="/ui/login")
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+# Clé Fernet persistante — stockée HORS du repo (répertoire utilisateur)
+FERNET_KEY_FILE = os.environ.get(
+    "MINIHEROKU_FERNET_KEY_FILE",
+    os.path.join(os.path.expanduser("~"), ".mini-heroku", "fernet.key"),
+)
 try:
     with open(FERNET_KEY_FILE, "rb") as f:
         FERNET_KEY = f.read()
 except FileNotFoundError:
+    os.makedirs(os.path.dirname(FERNET_KEY_FILE), exist_ok=True)
     FERNET_KEY = Fernet.generate_key()
     with open(FERNET_KEY_FILE, "wb") as f:
         f.write(FERNET_KEY)
+os.chmod(FERNET_KEY_FILE, 0o600)
 fernet = Fernet(FERNET_KEY)
 
 @app.on_event("startup")
@@ -42,6 +66,52 @@ class ConfigRequest(BaseModel):
 class ScaleRequest(BaseModel):
     replicas: int
 
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+# ── AUTH ────────────────────────────────────────────────
+@app.post("/auth/register")
+def register(req: RegisterRequest, db: Session = Depends(get_db)):
+    email = (req.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "Invalid email")
+    if len(req.password or "") < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(409, "Email already registered")
+    user = User(
+        email=email,
+        password=hash_password(req.password),
+        token=create_token(),
+    )
+    db.add(user)
+    db.commit()
+    # Adopter les apps legacy (sans propriétaire) créées avant l'auth
+    orphan = db.query(App).filter(App.owner_email.is_(None)).all()
+    for a in orphan:
+        a.owner_email = email
+    db.commit()
+    audit("register", "platform", {"email": email})
+    return {"status": "ok", "email": email, "token": user.token}
+
+@app.post("/auth/login")
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    email = (req.email or "").strip().lower()
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not verify_password(req.password, user.password):
+        raise HTTPException(401, "Invalid email or password")
+    audit("login", "platform", {"email": email})
+    return {"status": "ok", "email": user.email, "token": user.token}
+
+@app.get("/auth/me")
+def me(user: User = Depends(get_current_user)):
+    return {"email": user.email, "created_at": str(user.created_at)}
+
 # ── HELPERS ─────────────────────────────────────────────
 def get_free_port() -> int:
     with socket.socket() as s:
@@ -58,47 +128,72 @@ def get_env_vars(app_name: str, db: Session) -> dict:
             result[row.key] = row.value
     return result
 
+def get_app_domains(app_name: str, db: Session) -> list[str]:
+    rows = db.query(CustomDomain).filter(CustomDomain.app_name == app_name).all()
+    return [r.domain for r in rows]
+
+def _caddy_apps(db: Session) -> list[dict]:
+    apps = db.query(App).filter(App.status == "running").all()
+    return [{"name": a.name, "port": a.port,
+             "domains": get_app_domains(a.name, db)} for a in apps]
+
+def _refresh_caddy(db: Session):
+    update_caddyfile(_caddy_apps(db))
+
 # ── DEPLOY ──────────────────────────────────────────────
 @app.post("/apps/deploy")
-def deploy(req: DeployRequest, db: Session = Depends(get_db)):
-    releases = db.query(Release).filter(Release.app_name == req.name).all()
+def deploy(req: DeployRequest, db: Session = Depends(get_db),
+           user: User = Depends(get_current_user)):
+    name = validate_app_name(req.name)
+    repo_url = validate_repo_url(req.repo_url)
+    releases = db.query(Release).filter(Release.app_name == name).all()
     version = len(releases) + 1
-    image = build_and_push(req.repo_url, req.name, version)
-    env_vars = get_env_vars(req.name, db)
-    port = run_container(req.name, image, env_vars)
-    app_row = db.query(App).filter(App.name == req.name).first()
+    try:
+        image = build_and_push(repo_url, name, version)
+    except Exception as e:
+        audit("deploy", name, {"error": str(e)}, "error")
+        raise HTTPException(502, f"Build failed: {e}")
+    env_vars = get_env_vars(name, db)
+    port = run_container(name, image, env_vars)
+    app_row = db.query(App).filter(App.name == name).first()
     if not app_row:
-        app_row = App(name=req.name, status="running", port=port, image=image)
+        app_row = App(name=name, owner_email=user.email, repo_url=repo_url,
+                      status="running", port=port, image=image)
         db.add(app_row)
     else:
+        if app_row.owner_email not in (None, user.email):
+            raise HTTPException(403, "You do not own this app")
+        app_row.owner_email = user.email
+        app_row.repo_url = repo_url
         app_row.status = "running"
         app_row.port = port
         app_row.image = image
-    release = Release(app_name=req.name, version=version, image=image)
+    release = Release(app_name=name, version=version, image=image)
     db.add(release)
     db.commit()
-    all_apps = db.query(App).filter(App.status == "running").all()
-    update_caddyfile([{"name": a.name, "port": a.port} for a in all_apps])
-    audit("deploy", req.name, {"version": version, "port": port, "image": image})
-    return {"status": "deployed", "app": req.name, "port": port, "version": version}
+    _refresh_caddy(db)
+    audit("deploy", name, {"version": version, "port": port, "image": image})
+    return {"status": "deployed", "app": name, "port": port, "version": version}
 
 # ── LIST + GET ───────────────────────────────────────────
 @app.get("/apps")
-def list_apps(db: Session = Depends(get_db)):
-    apps = db.query(App).all()
+def list_apps(db: Session = Depends(get_db),
+              user: User = Depends(get_current_user)):
+    apps = db.query(App).filter(App.owner_email == user.email).all()
     return [{"name": a.name, "status": a.status, "port": a.port} for a in apps]
 
 @app.get("/apps/{name}")
-def get_app(name: str, db: Session = Depends(get_db)):
-    a = db.query(App).filter(App.name == name).first()
-    if not a:
-        raise HTTPException(404, "App not found")
+def get_app(name: str, db: Session = Depends(get_db),
+            user: User = Depends(get_current_user)):
+    a = get_app_or_404(name, db, user)
     return {"name": a.name, "status": get_container_status(name),
             "port": a.port, "image": a.image, "replicas": a.replicas}
 
 # ── CONFIG ───────────────────────────────────────────────
 @app.put("/apps/{name}/config")
-def set_config(name: str, req: ConfigRequest, db: Session = Depends(get_db)):
+def set_config(name: str, req: ConfigRequest, db: Session = Depends(get_db),
+               user: User = Depends(get_current_user)):
+    a = get_app_or_404(name, db, user)
     encrypted = fernet.encrypt(req.value.encode()).decode()
     row = db.query(EnvVar).filter(
         EnvVar.app_name == name, EnvVar.key == req.key).first()
@@ -107,26 +202,35 @@ def set_config(name: str, req: ConfigRequest, db: Session = Depends(get_db)):
     else:
         db.add(EnvVar(app_name=name, key=req.key, value=encrypted))
     db.commit()
+    audit("config:set", name, {"key": req.key})
     return {"status": "ok", "key": req.key}
 
 @app.get("/apps/{name}/config")
-def get_config(name: str, db: Session = Depends(get_db)):
+def get_config(name: str, db: Session = Depends(get_db),
+               user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
     rows = db.query(EnvVar).filter(EnvVar.app_name == name).all()
     return {r.key: "***" for r in rows}
 
 @app.delete("/apps/{name}/config/{key}")
-def delete_config(name: str, key: str, db: Session = Depends(get_db)):
+def delete_config(name: str, key: str, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
     row = db.query(EnvVar).filter(
         EnvVar.app_name == name, EnvVar.key == key).first()
     if not row:
         raise HTTPException(404, "Key not found")
     db.delete(row)
     db.commit()
+    audit("config:unset", name, {"key": key})
     return {"status": "deleted", "key": key}
 
 # ── LOGS STREAMING ───────────────────────────────────────
 @app.get("/apps/{name}/logs")
-def stream_logs(name: str, follow: bool = False, tail: int = 50):
+def stream_logs(name: str, follow: bool = False, tail: int = 50,
+                db: Session = Depends(get_db),
+                user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
     def generate():
         try:
             container = docker_client.containers.get(f"app-{name}")
@@ -141,7 +245,9 @@ def stream_logs(name: str, follow: bool = False, tail: int = 50):
 
 # ── MÉTRIQUES ────────────────────────────────────────────
 @app.get("/apps/{name}/metrics")
-def get_metrics(name: str):
+def get_metrics(name: str, db: Session = Depends(get_db),
+                user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
     try:
         container = docker_client.containers.get(f"app-{name}")
         stats = container.stats(stream=False)
@@ -168,10 +274,11 @@ def get_metrics(name: str):
 
 # ── SCALING ──────────────────────────────────────────────
 @app.post("/apps/{name}/scale")
-def scale(name: str, req: ScaleRequest, db: Session = Depends(get_db)):
-    a = db.query(App).filter(App.name == name).first()
-    if not a:
-        raise HTTPException(404, "App not found")
+def scale(name: str, req: ScaleRequest, db: Session = Depends(get_db),
+          user: User = Depends(get_current_user)):
+    a = get_app_or_404(name, db, user)
+    if req.replicas < 0 or req.replicas > 10:
+        raise HTTPException(400, "replicas must be between 0 and 10")
     env_vars = get_env_vars(name, db)
     ports = []
     # Stopper les anciens replicas
@@ -203,16 +310,15 @@ def scale(name: str, req: ScaleRequest, db: Session = Depends(get_db)):
         ports.append(port)
     a.replicas = req.replicas
     db.commit()
-    update_caddyfile_replicas(name, ports)
+    update_caddyfile_replicas(name, ports, get_app_domains(name, db))
     audit("scale", name, {"replicas": req.replicas, "ports": ports})
     return {"status": "scaled", "app": name, "replicas": req.replicas, "ports": ports}
 
 # ── RESTART ──────────────────────────────────────────────
 @app.post("/apps/{name}/restart")
-def restart(name: str, db: Session = Depends(get_db)):
-    a = db.query(App).filter(App.name == name).first()
-    if not a:
-        raise HTTPException(404, "App not found")
+def restart(name: str, db: Session = Depends(get_db),
+            user: User = Depends(get_current_user)):
+    a = get_app_or_404(name, db, user)
     env_vars = get_env_vars(name, db)
     port = run_container(name, a.image, env_vars, a.port)
     audit("restart", name, {"port": port})
@@ -220,7 +326,9 @@ def restart(name: str, db: Session = Depends(get_db)):
 
 # ── STOP ─────────────────────────────────────────────────
 @app.post("/apps/{name}/stop")
-def stop(name: str, db: Session = Depends(get_db)):
+def stop(name: str, db: Session = Depends(get_db),
+         user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
     stop_container(name)
     a = db.query(App).filter(App.name == name).first()
     if a:
@@ -231,14 +339,18 @@ def stop(name: str, db: Session = Depends(get_db)):
 
 # ── RELEASES ─────────────────────────────────────────────
 @app.get("/apps/{name}/releases")
-def get_releases(name: str, db: Session = Depends(get_db)):
+def get_releases(name: str, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
     releases = db.query(Release).filter(Release.app_name == name).all()
     return [{"version": r.version, "image": r.image,
              "deployed_at": str(r.deployed_at)} for r in releases]
 
 # ── ROLLBACK ─────────────────────────────────────────────
 @app.post("/apps/{name}/rollback")
-def rollback(name: str, version: int, db: Session = Depends(get_db)):
+def rollback(name: str, version: int, db: Session = Depends(get_db),
+             user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
     release = db.query(Release).filter(
         Release.app_name == name, Release.version == version).first()
     if not release:
@@ -251,17 +363,60 @@ def rollback(name: str, version: int, db: Session = Depends(get_db)):
         a.image = release.image
         a.status = "running"
         db.commit()
-    all_apps = db.query(App).filter(App.status == "running").all()
-    update_caddyfile([{"name": ap.name, "port": ap.port} for ap in all_apps])
+    _refresh_caddy(db)
+    audit("rollback", name, {"version": version, "port": port})
     return {"status": "rolled back", "app": name, "version": version, "port": port}
 
 # ── PS ───────────────────────────────────────────────────
 @app.get("/apps/{name}/ps")
-def ps(name: str):
+def ps(name: str, db: Session = Depends(get_db),
+       user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
     containers = docker_client.containers.list(
         filters={"name": f"app-{name}"})
     return [{"name": c.name, "status": c.status,
              "ports": c.ports} for c in containers]
+
+# ── CUSTOM DOMAINS ───────────────────────────────────────
+class DomainRequest(BaseModel):
+    domain: str
+
+@app.post("/apps/{name}/domains")
+def add_domain(name: str, req: DomainRequest, db: Session = Depends(get_db),
+               user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
+    domain = (req.domain or "").strip().lower()
+    if (not domain or "." not in domain or " " in domain
+            or domain.startswith(".") or domain.endswith(".")):
+        raise HTTPException(400, "Invalid domain")
+    existing = db.query(CustomDomain).filter(CustomDomain.domain == domain).first()
+    if existing:
+        raise HTTPException(409, "Domain already used by another app")
+    db.add(CustomDomain(app_name=name, domain=domain))
+    db.commit()
+    _refresh_caddy(db)
+    audit("domain:add", name, {"domain": domain})
+    return {"status": "added", "app": name, "domain": domain}
+
+@app.get("/apps/{name}/domains")
+def list_domains(name: str, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
+    return get_app_domains(name, db)
+
+@app.delete("/apps/{name}/domains/{domain}")
+def remove_domain(name: str, domain: str, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
+    row = db.query(CustomDomain).filter(
+        CustomDomain.app_name == name, CustomDomain.domain == domain).first()
+    if not row:
+        raise HTTPException(404, "Domain not found")
+    db.delete(row)
+    db.commit()
+    _refresh_caddy(db)
+    audit("domain:remove", name, {"domain": domain})
+    return {"status": "removed", "domain": domain}
 
 # ── WEB UI ───────────────────────────────────────────────
 from api.ui import router as ui_router
@@ -291,7 +446,8 @@ def audit(action: str, app_name: str, details: dict, status: str = "success"):
         db.close()
 
 @app.get("/audit")
-def get_audit_log(limit: int = 50, db: Session = Depends(get_db)):
+def get_audit_log(limit: int = 50, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
     logs = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(limit).all()
     return [{
         "id": l.id,
@@ -303,7 +459,9 @@ def get_audit_log(limit: int = 50, db: Session = Depends(get_db)):
     } for l in logs]
 
 @app.get("/audit/{app_name}")
-def get_app_audit(app_name: str, db: Session = Depends(get_db)):
+def get_app_audit(app_name: str, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
+    get_app_or_404(app_name, db, user)
     logs = db.query(AuditLog).filter(
         AuditLog.app_name == app_name
     ).order_by(AuditLog.created_at.desc()).limit(20).all()
@@ -316,22 +474,28 @@ def get_app_audit(app_name: str, db: Session = Depends(get_db)):
 
 # ── ZERO-DOWNTIME DEPLOY (Blue-Green) ────────────────────
 @app.post("/apps/{name}/deploy-zero-downtime")
-def deploy_zero_downtime(name: str, db: Session = Depends(get_db)):
-    """Blue-green deploy — nouvelle version sans coupure"""
-    a = db.query(App).filter(App.name == name).first()
-    if not a:
-        raise HTTPException(404, "App not found")
-
-    # Récupérer la dernière release
-    latest = db.query(Release).filter(
-        Release.app_name == name
-    ).order_by(Release.version.desc()).first()
-    if not latest:
-        raise HTTPException(404, "No releases found")
+def deploy_zero_downtime(name: str, db: Session = Depends(get_db),
+                         user: User = Depends(get_current_user)):
+    """Blue-green deploy — construit la nouvelle version et bascule sans coupure."""
+    a = get_app_or_404(name, db, user)
+    if not a.repo_url:
+        raise HTTPException(400, "This app has no repo_url — deploy it once first")
 
     env_vars = get_env_vars(name, db)
 
-    # 1. Lancer le nouveau container (green) sur un nouveau port
+    # 1. Construire une NOUVELLE version depuis le code source
+    latest = db.query(Release).filter(
+        Release.app_name == name
+    ).order_by(Release.version.desc()).first()
+    new_version = (latest.version if latest else 0) + 1
+    try:
+        new_image = build_and_push(a.repo_url, name, new_version)
+    except Exception as e:
+        audit("deploy-zero-downtime", name, {"error": str(e)}, "error")
+        raise HTTPException(502, f"Build failed: {e}")
+    print(f"[blue-green] Built new image {new_image}")
+
+    # 2. Lancer le nouveau container (green) sur un nouveau port
     green_port = get_free_port()
     green_name = f"app-{name}-green"
     try:
@@ -341,7 +505,7 @@ def deploy_zero_downtime(name: str, db: Session = Depends(get_db)):
         pass
 
     docker_client.containers.run(
-        latest.image,
+        new_image,
         name=green_name,
         detach=True,
         ports={"8000/tcp": green_port},
@@ -352,7 +516,7 @@ def deploy_zero_downtime(name: str, db: Session = Depends(get_db)):
     )
     print(f"[blue-green] Green container started on port {green_port}")
 
-    # 2. Health check du nouveau container (max 30s)
+    # 3. Health check du nouveau container (max 30s)
     import time as _time
     import requests as _requests
     healthy = False
@@ -377,7 +541,7 @@ def deploy_zero_downtime(name: str, db: Session = Depends(get_db)):
         audit("deploy-zero-downtime", name, {"error": "green unhealthy"}, "error")
         raise HTTPException(500, "New version failed health check — keeping old version")
 
-    # 3. Basculer Caddy vers le green
+    # 4. Basculer Caddy vers le green
     old_port = a.port
     old_name = f"app-{name}-blue"
 
@@ -395,13 +559,16 @@ def deploy_zero_downtime(name: str, db: Session = Depends(get_db)):
     except:
         pass
 
-    # Mettre à jour Caddy avec le nouveau port
+    # 5. Mettre à jour DB + Caddy
     a.port = green_port
+    a.image = new_image
+    a.status = "running"
+    release = Release(app_name=name, version=new_version, image=new_image)
+    db.add(release)
     db.commit()
-    all_apps = db.query(App).filter(App.status == "running").all()
-    update_caddyfile([{"name": ap.name, "port": ap.port} for ap in all_apps])
+    _refresh_caddy(db)
 
-    # 4. Stopper l'ancien container (blue) après la bascule
+    # 6. Stopper l'ancien container (blue) après la bascule
     _time.sleep(2)
     try:
         blue = docker_client.containers.get(old_name)
@@ -412,15 +579,17 @@ def deploy_zero_downtime(name: str, db: Session = Depends(get_db)):
         pass
 
     audit("deploy-zero-downtime", name, {
+        "version": new_version,
         "old_port": old_port,
         "new_port": green_port,
-        "image": latest.image
+        "image": new_image
     })
 
     return {
         "status": "deployed",
         "strategy": "blue-green",
         "app": name,
+        "version": new_version,
         "old_port": old_port,
         "new_port": green_port,
         "downtime": "0s"

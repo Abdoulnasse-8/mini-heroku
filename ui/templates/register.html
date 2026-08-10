@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div style="max-width:380px; margin:3rem auto;">
+    <div class="card">
+        <h2 style="text-align:center; margin-bottom:1.5rem;">📝 Create your account</h2>
+        {% if error %}
+        <p style="background:#f8d7da; color:#721c24; padding:0.6rem; border-radius:4px; font-size:0.85rem; margin-bottom:1rem;">{{ error }}</p>
+        {% endif %}
+        <form method="POST" action="/ui/register">
+            <div style="margin-bottom:0.8rem;">
+                <label style="display:block; margin-bottom:0.3rem; font-size:0.85rem; color:#666;">Email</label>
+                <input type="email" name="email" required style="width:100%;" autocomplete="email">
+            </div>
+            <div style="margin-bottom:1.2rem;">
+                <label style="display:block; margin-bottom:0.3rem; font-size:0.85rem; color:#666;">Password (min. 8 characters)</label>
+                <input type="password" name="password" required minlength="8" style="width:100%;" autocomplete="new-password">
+            </div>
+            <button class="btn btn-primary" style="width:100%; padding:10px;" type="submit">Create account</button>
+        </form>
+        <p style="text-align:center; margin-top:1rem; font-size:0.85rem; color:#888;">
+            Already have an account? <a href="/ui/login" style="color:#6762a6;">Sign in</a>
+        </p>
+    </div>
+</div>
+{% endblock %}

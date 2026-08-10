@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 *.db
 .env
+.fernet_key
+.mini-heroku/
+tests/test.db
+tests/test-fernet.key
+tests/test-Caddyfile

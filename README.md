@@ -77,6 +77,8 @@ git push ───────────────────────�
 | Local Docker registry | ✅ |
 | Automatic HTTPS (Let's Encrypt) | ✅ |
 | Custom subdomain per app | ✅ |
+| Custom domains (DNS + auto HTTPS) | ✅ |
+| Multi-user accounts + API tokens | ✅ |
 | Encrypted environment variables | ✅ |
 | Real-time log streaming (SSE) | ✅ |
 | CPU / RAM metrics | ✅ |
@@ -111,6 +113,10 @@ git push ───────────────────────�
 
 | Command | Description |
 |---|---|
+| `myplatform register` | Create an account |
+| `myplatform login` | Log in and store your API token |
+| `myplatform logout` | Remove the stored token |
+| `myplatform whoami` | Show the current user |
 | `myplatform list` | List all deployed apps |
 | `myplatform info <app>` | Show app details and URL |
 | `myplatform logs <app>` | View recent logs |
@@ -124,6 +130,9 @@ git push ───────────────────────�
 | `myplatform rollback <app> <version>` | Rollback to a previous release |
 | `myplatform metrics <app>` | Show CPU and RAM usage |
 | `myplatform ps <app>` | List running containers |
+| `myplatform domains <app>` | List custom domains |
+| `myplatform domains:add <app> DOMAIN` | Attach a custom domain |
+| `myplatform domains:remove <app> DOMAIN` | Remove a custom domain |
 
 ---
 
@@ -147,7 +156,11 @@ sudo systemctl start mini-heroku
 # On the VM — initialize a git repo for your app
 sudo mini-heroku-init-repo my-app
 
-# On your local machine — add the remote and push
+# On your local machine — log in first (multi-user)
+myplatform register
+myplatform login
+
+# Add the remote and push
 git remote add myplatform git@VM-IP:/opt/git-repos/my-app.git
 git push myplatform main
 ```
@@ -165,8 +178,11 @@ Full interactive docs: `http://YOUR-IP:8000/docs`
 
 | Method | Endpoint | Description |
 |---|---|---|
+| `POST` | `/auth/register` | Create an account (returns API token) |
+| `POST` | `/auth/login` | Log in (returns API token) |
+| `GET` | `/auth/me` | Current user |
 | `POST` | `/apps/deploy` | Deploy an app from git repo |
-| `GET` | `/apps` | List all apps |
+| `GET` | `/apps` | List your apps |
 | `GET` | `/apps/{name}` | Get app details |
 | `PUT` | `/apps/{name}/config` | Set env var |
 | `GET` | `/apps/{name}/config` | Get env vars |
@@ -178,14 +194,23 @@ Full interactive docs: `http://YOUR-IP:8000/docs`
 | `GET` | `/apps/{name}/releases` | List releases |
 | `POST` | `/apps/{name}/rollback` | Rollback to version N |
 | `GET` | `/apps/{name}/ps` | List containers |
+| `POST` | `/apps/{name}/domains` | Add a custom domain |
+| `GET` | `/apps/{name}/domains` | List custom domains |
+| `DELETE` | `/apps/{name}/domains/{domain}` | Remove a custom domain |
+| `POST` | `/apps/{name}/deploy-zero-downtime` | Blue-green deploy |
+| `GET` | `/audit` | Audit log (global) |
+| `GET` | `/audit/{app}` | Audit log per app |
 
 ---
 
 ## Security
 
+- **Multi-user**: every user owns their apps — access control on all API + UI routes
+- **API tokens**: opaque bearer tokens for the CLI (`myplatform login`), PBKDF2-SHA256 password hashing
 - **Env vars encrypted at rest** using Fernet (AES-128-CBC)
+- **Fernet key stored OUTSIDE the repo** (`~/.mini-heroku/fernet.key`, mode 600)
+- **Input validation**: app names (regex), repo URLs (HTTPS or local path), domains
 - **No secrets in logs** — all values masked as `***`
-- **Input validation** on all API endpoints
 - **Resource limits** per container (CPU + memory)
 - **Bandit audit**: 0 High severity issues
 
@@ -229,26 +254,30 @@ git push myplatform main
 ```
 mini-heroku/
 ├── api/
-│   ├── main.py          # FastAPI control plane (all endpoints)
-│   └── ui.py            # Web UI routes
+│   ├── main.py        # FastAPI — tous les endpoints
+│   ├── security.py    # Auth, hash PBKDF2, tokens, validations
+│   └── ui.py          # Routes Web UI (login, apps, domains)
 ├── builder/
-│   └── build.py         # Clone → docker build → push registry
+│   └── build.py       # Clone → docker build → push registry
 ├── runner/
-│   └── run.py           # Docker container lifecycle
+│   └── run.py         # Cycle de vie des containers Docker
 ├── proxy/
-│   └── caddy.py         # Dynamic Caddyfile generation
+│   └── caddy.py       # Génération dynamique du Caddyfile
 ├── cli/
-│   └── main.py          # Click CLI (12 commands)
+│   └── main.py        # CLI Click (register, login, domains, ...)
 ├── db/
-│   └── models.py        # SQLAlchemy models
+│   └── models.py      # Modèles SQLAlchemy (App, Release, EnvVar, AuditLog, User, CustomDomain)
 ├── ui/
 │   └── templates/
 │       ├── base.html
-│       ├── index.html
-│       ├── app.html
-│       └── deploy.html
+│       ├── index.html   # Dashboard apps
+│       ├── app.html     # Détail app (métriques, logs, env, releases, domains)
+│       ├── deploy.html  # Formulaire déploiement
+│       ├── login.html   # Connexion
+│       └── register.html# Inscription
 ├── tests/
-│   └── test_e2e.py      # End-to-end tests (11/11 passing)
+│   ├── test_auth.py   # Tests unitaires auth + validation + domains (locaux)
+│   └── test_e2e.py    # Tests E2E (sur la VM)
 ├── requirements.txt
 └── README.md
 ```

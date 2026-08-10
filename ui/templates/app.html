@@ -78,6 +78,38 @@
         </script>
     </div>
 
+    <!-- Custom domains -->
+    <div class="card">
+        <h2>🌐 Custom Domains</h2>
+        {% for d in domains %}
+        <div class="flex mt-1" style="justify-content:space-between">
+            <code style="flex:1; background:#f8f9fa; padding:4px 8px; border-radius:4px; font-size:0.85rem;">{{ d }}</code>
+            <button class="btn btn-danger" onclick="removeDomain('{{ d }}')">✕</button>
+        </div>
+        {% endfor %}
+        <div class="flex" style="margin-top:0.8rem">
+            <input type="text" id="domain-input" placeholder="app.example.com" style="flex:1">
+            <button class="btn btn-success" onclick="addDomain()">Add</button>
+        </div>
+        <p style="font-size:0.75rem; color:#888; margin-top:0.5rem;">
+            Point your DNS A/AAAA record to 68.221.16.224 — HTTPS is automatic (Let's Encrypt).
+        </p>
+        <script>
+        function addDomain() {
+            const d = document.getElementById('domain-input').value;
+            fetch('/ui/apps/{{ app.name }}/domains', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({domain: d})
+            }).then(() => location.reload());
+        }
+        function removeDomain(domain) {
+            fetch('/ui/apps/{{ app.name }}/domains/' + encodeURIComponent(domain), {method: 'DELETE'})
+            .then(() => location.reload());
+        }
+        </script>
+    </div>
+
     <!-- Releases -->
     <div class="card">
         <h2>🚀 Releases</h2>
