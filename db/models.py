@@ -65,6 +65,10 @@ def _migrate():
         if "repo_url" not in cols:
             conn.execute(text("ALTER TABLE apps ADD COLUMN repo_url VARCHAR"))
             conn.commit()
+        ucols = {r[1] for r in conn.execute(text("PRAGMA table_info(users)"))}
+        if "created_at" not in ucols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN created_at DATETIME"))
+            conn.commit()
 
 def init_db():
     Base.metadata.create_all(engine)
