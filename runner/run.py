@@ -39,7 +39,7 @@ def run_container(app_name: str, image: str, env_vars: dict, port: int = None) -
         environment=env_vars,
         mem_limit="512m",
         nano_cpus=500_000_000,
-        restart_policy={"Name": "on-failure", "MaximumRetryCount": 3},
+        restart_policy={"Name": "unless-stopped"},
     )
     print(f"[runner] Started {container_name} on port {port}")
     return port

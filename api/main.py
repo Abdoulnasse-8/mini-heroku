@@ -309,7 +309,7 @@ def scale(name: str, req: ScaleRequest, db: Session = Depends(get_db),
             environment=env_vars,
             mem_limit="256m",
             nano_cpus=250_000_000,
-            restart_policy={"Name": "on-failure", "MaximumRetryCount": 3}
+            restart_policy={"Name": "unless-stopped"}
         )
         ports.append(port)
     a.replicas = req.replicas
@@ -520,7 +520,7 @@ def deploy_zero_downtime(name: str, db: Session = Depends(get_db),
         environment=env_vars,
         mem_limit="512m",
         nano_cpus=500_000_000,
-        restart_policy={"Name": "on-failure", "MaximumRetryCount": 3}
+        restart_policy={"Name": "unless-stopped"}
     )
     print(f"[blue-green] Green container started on port {green_port}")
 
