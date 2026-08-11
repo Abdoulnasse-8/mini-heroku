@@ -1,25 +1,28 @@
 {% extends "base.html" %}
-{% block content %}
-<div style="max-width:380px; margin:3rem auto;">
-    <div class="card">
-        <h2 style="text-align:center; margin-bottom:1.5rem;">🔐 Sign in to Mini Heroku</h2>
-        {% if error %}
-        <p style="background:#f8d7da; color:#721c24; padding:0.6rem; border-radius:4px; font-size:0.85rem; margin-bottom:1rem;">{{ error }}</p>
-        {% endif %}
-        <form method="POST" action="/ui/login">
-            <div style="margin-bottom:0.8rem;">
-                <label style="display:block; margin-bottom:0.3rem; font-size:0.85rem; color:#666;">Email</label>
-                <input type="email" name="email" required style="width:100%;" autocomplete="email">
-            </div>
-            <div style="margin-bottom:1.2rem;">
-                <label style="display:block; margin-bottom:0.3rem; font-size:0.85rem; color:#666;">Password</label>
-                <input type="password" name="password" required style="width:100%;" autocomplete="current-password">
-            </div>
-            <button class="btn btn-primary" style="width:100%; padding:10px;" type="submit">Sign in</button>
-        </form>
-        <p style="text-align:center; margin-top:1rem; font-size:0.85rem; color:#888;">
-            New here? <a href="/ui/register" style="color:#6762a6;">Create an account</a>
-        </p>
+{% block title %}Sign in — Mini Heroku{% endblock %}
+{% block auth %}
+<div class="auth-card">
+    <div class="auth-logo">⚡</div>
+    <h1>Welcome back</h1>
+    <p class="sub">Sign in to your Mini Heroku account</p>
+    {% if error %}
+    <div class="card" style="background:var(--danger-soft); border-color:#fecaca; padding:0.7rem 0.9rem; margin-bottom:1rem;">
+        <p style="color:#991b1b; font-size:0.82rem; font-weight:600;">{{ error }}</p>
     </div>
+    {% endif %}
+    <form method="POST" action="/ui/login">
+        <div class="field">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email">
+        </div>
+        <div class="field">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+        <button class="btn btn-primary btn-lg btn-block" type="submit">Sign in</button>
+    </form>
+    <p class="muted" style="text-align:center; margin-top:1.2rem; font-size:0.85rem;">
+        New here? <a href="/ui/register">Create an account</a>
+    </p>
 </div>
 {% endblock %}

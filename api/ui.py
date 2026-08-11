@@ -144,6 +144,13 @@ def app_detail(name: str, request: Request, db: Session = Depends(get_db),
         }
     )
 
+@router.post("/apps/{name}/redeploy")
+def ui_redeploy(name: str, db: Session = Depends(get_db),
+                user: User = Depends(get_current_user)):
+    """Rebuild and deploy the latest code from the app's git repo (blue-green)."""
+    from api.main import deploy_zero_downtime
+    return deploy_zero_downtime(name, db, user)
+
 @router.post("/apps/{name}/restart")
 def ui_restart(name: str, db: Session = Depends(get_db),
                user: User = Depends(get_current_user)):

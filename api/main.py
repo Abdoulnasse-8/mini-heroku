@@ -9,7 +9,7 @@ sys.path.insert(0, BASE_DIR)
 from db.models import (init_db, get_db, SessionLocal, App, Release, EnvVar,
                        CustomDomain, User)
 from builder.build import build_and_push
-from runner.run import run_container, stop_container, get_container_status
+from runner.run import run_container, stop_container, get_container_status, wait_healthy
 from proxy.caddy import update_caddyfile, update_caddyfile_replicas
 from cryptography.fernet import Fernet
 from api.security import (
@@ -155,6 +155,10 @@ def deploy(req: DeployRequest, db: Session = Depends(get_db),
         raise HTTPException(502, f"Build failed: {e}")
     env_vars = get_env_vars(name, db)
     port = run_container(name, image, env_vars)
+    if not wait_healthy(port):
+        stop_container(name)
+        audit("deploy", name, {"error": "health check failed after deploy"}, "error")
+        raise HTTPException(502, "App did not become healthy within 30s — check the Dockerfile / logs")
     app_row = db.query(App).filter(App.name == name).first()
     if not app_row:
         app_row = App(name=name, owner_email=user.email, repo_url=repo_url,
@@ -321,6 +325,10 @@ def restart(name: str, db: Session = Depends(get_db),
     a = get_app_or_404(name, db, user)
     env_vars = get_env_vars(name, db)
     port = run_container(name, a.image, env_vars, a.port)
+    if not wait_healthy(port):
+        stop_container(name)
+        audit("restart", name, {"error": "health check failed"}, "error")
+        raise HTTPException(502, "App did not become healthy within 30s after restart")
     audit("restart", name, {"port": port})
     return {"status": "restarted", "app": name, "port": port}
 
@@ -518,18 +526,8 @@ def deploy_zero_downtime(name: str, db: Session = Depends(get_db),
 
     # 3. Health check du nouveau container (max 30s)
     import time as _time
-    import requests as _requests
-    healthy = False
-    for i in range(15):
-        _time.sleep(2)
-        try:
-            r = _requests.get(f"http://localhost:{green_port}", timeout=2)
-            if r.status_code < 500:
-                healthy = True
-                print(f"[blue-green] Green healthy after {(i+1)*2}s")
-                break
-        except:
-            print(f"[blue-green] Waiting for green... ({(i+1)*2}s)")
+    healthy = wait_healthy(green_port)
+    print(f"[blue-green] Green healthy: {healthy}")
 
     if not healthy:
         # Rollback — stopper le green et garder le blue

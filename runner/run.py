@@ -1,6 +1,20 @@
-import socket, docker
+import socket, time
+import requests, docker
 
 client = docker.from_env()
+
+def wait_healthy(port: int, timeout: int = 30) -> bool:
+    """Poll http://localhost:port until it answers with status < 500, or timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            r = requests.get(f"http://localhost:{port}", timeout=2)
+            if r.status_code < 500:
+                return True
+        except requests.exceptions.RequestException:
+            pass
+        time.sleep(2)
+    return False
 
 def get_free_port() -> int:
     with socket.socket() as s:

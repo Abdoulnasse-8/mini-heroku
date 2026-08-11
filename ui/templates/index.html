@@ -1,43 +1,80 @@
 {% extends "base.html" %}
+{% block title %}Applications — Mini Heroku{% endblock %}
+{% block header %}Applications{% endblock %}
+{% block crumb %}{{ apps|length }} app(s){% endblock %}
 {% block content %}
-<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
-    <h2>📦 Applications ({{ apps|length }})</h2>
-    <a href="/ui/deploy" class="btn btn-primary">+ Deploy New App</a>
+<div class="page-head">
+    <h2>Your applications</h2>
+    <a href="/ui/deploy" class="btn btn-primary btn-lg">＋ Deploy New App</a>
 </div>
 
 {% if apps %}
-<div class="card">
-    <table>
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>Status</th>
-                <th>Replicas</th>
-                <th>URL</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for app in apps %}
-            <tr>
-                <td><span class="app-name">{{ app.name }}</span></td>
-                <td><span class="badge badge-{{ app.status }}">{{ app.status }}</span></td>
-                <td>{{ app.replicas }}</td>
-                <td><a href="https://{{ app.name }}.68.221.16.224.sslip.io" target="_blank" class="url-link">{{ app.name }}.68.221.16.224.sslip.io</a></td>
-                <td>
-                    <a href="/ui/apps/{{ app.name }}" class="btn btn-secondary">View</a>
-                    <button class="btn btn-primary" hx-post="/ui/apps/{{ app.name }}/restart" hx-target="body" hx-swap="none" onclick="location.reload()">Restart</button>
-                    <button class="btn btn-danger" hx-post="/ui/apps/{{ app.name }}/stop" hx-target="body" hx-swap="none" onclick="location.reload()">Stop</button>
-                </td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
+<div class="app-grid">
+    {% for app in apps %}
+    <div class="app-card">
+        <div class="head">
+            <span class="name">{{ app.name }}</span>
+            <span class="badge badge-{{ app.status }}">{{ app.status }}</span>
+        </div>
+        <div>
+            <a class="url" href="https://{{ app.name }}.68.221.16.224.sslip.io" target="_blank">
+                {{ app.name }}.68.221.16.224.sslip.io ↗
+            </a>
+        </div>
+        <div class="stats">
+            <div class="stat">
+                <div class="v">{{ app.replicas }}</div>
+                <div class="k">Replicas</div>
+            </div>
+            <div class="stat">
+                <div class="v">{{ app.port if app.port else '—' }}</div>
+                <div class="k">Port</div>
+            </div>
+            <div class="stat">
+                <div class="v" style="font-size:0.85rem; padding-top:0.15rem;">{{ app.image.split('/')[-1] if app.image else '—' }}</div>
+                <div class="k">Image</div>
+            </div>
+        </div>
+        <div class="actions">
+            <a href="/ui/apps/{{ app.name }}" class="btn btn-primary">Manage</a>
+            <button class="btn btn-secondary" onclick="redeploy('{{ app.name }}', this)">↻ Redeploy</button>
+            {% if app.status == 'running' %}
+            <button class="btn btn-danger" onclick="doStop('{{ app.name }}', this)">Stop</button>
+            {% else %}
+            <button class="btn btn-success" onclick="doStart('{{ app.name }}', this)">Start</button>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
 </div>
 {% else %}
-<div class="card" style="text-align:center; padding:3rem; color:#888;">
-    <p style="font-size:1.2rem;">No apps deployed yet.</p>
+<div class="empty">
+    <div class="big">🚀</div>
+    <h3>No applications yet</h3>
+    <p>Deploy your first app from a Git repository and it will be live with HTTPS in under 2 minutes.</p>
     <a href="/ui/deploy" class="btn btn-primary" style="margin-top:1rem;">Deploy your first app</a>
 </div>
 {% endif %}
+
+<script>
+function redeploy(name, btn) {
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+    api('POST', '/ui/apps/' + name + '/redeploy')
+        .then(() => { toast('Redeploying ' + name + ' — this may take a minute', 'success'); location.reload(); })
+        .catch(e => { btn.disabled = false; btn.textContent = '↻ Redeploy'; toast(e.message, 'error'); });
+}
+function doStop(name, btn) {
+    if (!confirm('Stop app "' + name + '"?')) return;
+    btn.disabled = true;
+    api('POST', '/ui/apps/' + name + '/stop')
+        .then(() => location.reload())
+        .catch(e => toast(e.message, 'error'));
+}
+function doStart(name, btn) {
+    btn.disabled = true;
+    api('POST', '/ui/apps/' + name + '/restart')
+        .then(() => { toast(name + ' restarted', 'success'); location.reload(); })
+        .catch(e => toast(e.message, 'error'));
+}
+</script>
 {% endblock %}

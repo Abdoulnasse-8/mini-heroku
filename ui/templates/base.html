@@ -3,62 +3,331 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mini Heroku</title>
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>{% block title %}Mini Heroku{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
+        :root {
+            --bg: #f1f5f9;
+            --surface: #ffffff;
+            --border: #e2e8f0;
+            --text: #0f172a;
+            --muted: #64748b;
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-soft: #eef2ff;
+            --success: #10b981;
+            --success-soft: #d1fae5;
+            --danger: #ef4444;
+            --danger-soft: #fee2e2;
+            --warning: #f59e0b;
+            --warning-soft: #fef3c7;
+            --sidebar: #0f172a;
+            --sidebar-text: #94a3b8;
+            --sidebar-active: #ffffff;
+            --radius: 10px;
+            --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.08);
+            --shadow-lg: 0 10px 25px -5px rgba(15, 23, 42, 0.15);
+            --mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
-        nav { background: #6762a6; color: white; padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
-        nav h1 { font-size: 1.2rem; font-weight: 600; }
-        nav a { color: white; text-decoration: none; opacity: 0.8; }
-        nav a:hover { opacity: 1; }
-        .container { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
-        .card { background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; }
-        .badge-running { background: #d4edda; color: #155724; }
-        .badge-stopped { background: #f8d7da; color: #721c24; }
-        .btn { padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; text-decoration: none; display: inline-block; }
-        .btn-primary { background: #6762a6; color: white; }
-        .btn-primary:hover { background: #5a5599; }
-        .btn-danger { background: #dc3545; color: white; }
-        .btn-danger:hover { background: #c82333; }
-        .btn-secondary { background: #6c757d; color: white; }
-        .btn-secondary:hover { background: #5a6268; }
-        .btn-success { background: #28a745; color: white; }
-        h2 { font-size: 1.1rem; margin-bottom: 1rem; color: #444; }
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; padding: 8px 12px; background: #f8f9fa; font-size: 0.85rem; color: #666; border-bottom: 1px solid #dee2e6; }
-        td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; font-size: 0.9rem; vertical-align: middle; }
-        tr:last-child td { border-bottom: none; }
-        .app-name { font-weight: 600; color: #6762a6; }
-        .metric-bar { height: 6px; background: #e9ecef; border-radius: 3px; margin-top: 4px; }
-        .metric-fill { height: 100%; border-radius: 3px; background: #6762a6; }
-        pre { background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 6px; font-size: 0.8rem; overflow-x: auto; max-height: 300px; overflow-y: auto; }
-        input, select { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem; }
-        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        .flex { display: flex; gap: 0.5rem; align-items: center; }
-        .mt-1 { margin-top: 0.5rem; }
-        .url-link { color: #6762a6; font-size: 0.85rem; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        a { color: var(--primary); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        /* ── Layout ── */
+        .layout { display: flex; min-height: 100vh; }
+        .sidebar {
+            width: 240px; background: var(--sidebar); color: var(--sidebar-text);
+            display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+            flex-shrink: 0;
+        }
+        .sidebar .logo {
+            display: flex; align-items: center; gap: 0.6rem;
+            padding: 1.4rem 1.5rem; color: #fff; font-weight: 800; font-size: 1.05rem;
+            letter-spacing: -0.02em;
+        }
+        .sidebar .logo .bolt {
+            width: 30px; height: 30px; border-radius: 8px;
+            background: linear-gradient(135deg, #818cf8, #6366f1);
+            display: grid; place-items: center; font-size: 0.9rem; color: #fff;
+        }
+        .sidebar nav { padding: 0.5rem 0.75rem; display: flex; flex-direction: column; gap: 2px; }
+        .sidebar nav a {
+            display: flex; align-items: center; gap: 0.7rem;
+            padding: 0.55rem 0.75rem; border-radius: 8px;
+            color: var(--sidebar-text); font-weight: 500; font-size: 0.9rem;
+            transition: background 0.15s, color 0.15s;
+        }
+        .sidebar nav a:hover { background: rgba(148, 163, 184, 0.1); color: var(--sidebar-active); text-decoration: none; }
+        .sidebar nav a.active { background: rgba(99, 102, 241, 0.18); color: var(--sidebar-active); }
+        .sidebar nav a .icon { width: 20px; text-align: center; opacity: 0.9; }
+        .sidebar .spacer { flex: 1; }
+        .sidebar .userbox {
+            margin: 0.75rem; padding: 0.8rem; border-radius: 10px;
+            background: rgba(148, 163, 184, 0.08);
+            display: flex; align-items: center; gap: 0.6rem;
+        }
+        .sidebar .userbox .avatar {
+            width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+            background: linear-gradient(135deg, #34d399, #10b981);
+            color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 0.8rem;
+        }
+        .sidebar .userbox .meta { min-width: 0; }
+        .sidebar .userbox .meta .email { color: #e2e8f0; font-size: 0.78rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .sidebar .userbox .meta .logout { font-size: 0.72rem; color: var(--sidebar-text); }
+        .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .topbar {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 1.1rem 2rem; background: var(--surface); border-bottom: 1px solid var(--border);
+        }
+        .topbar h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.01em; }
+        .topbar .crumb { color: var(--muted); font-size: 0.8rem; }
+        .content { padding: 2rem; max-width: 1200px; width: 100%; margin: 0 auto; }
+
+        /* ── Auth pages (no sidebar) ── */
+        .auth-wrap { min-height: 100vh; display: grid; place-items: center; padding: 2rem; }
+        .auth-card {
+            width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--border);
+            border-radius: 16px; padding: 2.25rem; box-shadow: var(--shadow-lg);
+        }
+        .auth-card .auth-logo {
+            width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 1rem;
+            background: linear-gradient(135deg, #818cf8, #6366f1);
+            display: grid; place-items: center; font-size: 1.3rem; color: #fff;
+        }
+        .auth-card h1 { text-align: center; font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 0.25rem; }
+        .auth-card .sub { text-align: center; color: var(--muted); font-size: 0.85rem; margin-bottom: 1.75rem; }
+
+        /* ── Cards ── */
+        .card {
+            background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 1.5rem; margin-bottom: 1.25rem; box-shadow: var(--shadow);
+        }
+        .card h2 { font-size: 0.95rem; font-weight: 700; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+        .card h2 .sub { font-weight: 400; color: var(--muted); font-size: 0.8rem; }
+
+        /* ── Badges ── */
+        .badge {
+            display: inline-flex; align-items: center; gap: 0.35rem;
+            padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600;
+            text-transform: capitalize;
+        }
+        .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        .badge-running, .badge-running-deploying { background: var(--success-soft); color: #065f46; }
+        .badge-stopped { background: var(--danger-soft); color: #991b1b; }
+        .badge-building, .badge-pending { background: var(--warning-soft); color: #92400e; }
+
+        /* ── Buttons ── */
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+            padding: 0.5rem 0.9rem; border-radius: 8px; border: 1px solid transparent;
+            font-family: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+            transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.05s;
+            white-space: nowrap;
+        }
+        .btn:active { transform: translateY(1px); }
+        .btn-primary { background: var(--primary); color: #fff; }
+        .btn-primary:hover { background: var(--primary-dark); }
+        .btn-success { background: var(--success); color: #fff; }
+        .btn-success:hover { background: #059669; }
+        .btn-danger { background: #fff; color: var(--danger); border-color: #fecaca; }
+        .btn-danger:hover { background: var(--danger-soft); }
+        .btn-secondary { background: #fff; color: var(--text); border-color: var(--border); }
+        .btn-secondary:hover { background: var(--bg); }
+        .btn-ghost { background: transparent; color: var(--muted); }
+        .btn-ghost:hover { background: var(--bg); color: var(--text); }
+        .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.76rem; border-radius: 6px; }
+        .btn-lg { padding: 0.65rem 1.2rem; font-size: 0.9rem; }
+        .btn-block { width: 100%; }
+        .btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+        /* ── Forms ── */
+        .field { margin-bottom: 1rem; }
+        .field label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--muted); margin-bottom: 0.35rem; }
+        .field input, .field textarea, .field select {
+            width: 100%; padding: 0.55rem 0.75rem; border: 1px solid var(--border); border-radius: 8px;
+            font-family: inherit; font-size: 0.9rem; background: #fff; color: var(--text);
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .field input:focus, .field textarea:focus, .field select:focus {
+            outline: none; border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+        }
+        .hint { font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }
+        .hint.error { color: var(--danger); }
+
+        /* ── App cards grid ── */
+        .app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.25rem; }
+        .app-card {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+            padding: 1.4rem; box-shadow: var(--shadow); transition: box-shadow 0.2s, transform 0.2s;
+            display: flex; flex-direction: column; gap: 0.9rem;
+        }
+        .app-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+        .app-card .head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+        .app-card .name { font-weight: 700; font-size: 1.02rem; letter-spacing: -0.01em; }
+        .app-card .url { color: var(--muted); font-size: 0.78rem; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .app-card .stats { display: flex; gap: 1rem; }
+        .app-card .stat { flex: 1; }
+        .app-card .stat .v { font-weight: 700; font-size: 1.05rem; }
+        .app-card .stat .k { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+        .app-card .actions { display: flex; gap: 0.5rem; margin-top: auto; }
+        .app-card .actions .btn { flex: 1; }
+
+        /* ── Metric cards ── */
+        .metric-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.25rem; }
+        .metric {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+            padding: 1.1rem 1.25rem; box-shadow: var(--shadow);
+        }
+        .metric .k { font-size: 0.74rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+        .metric .v { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; margin-top: 0.15rem; }
+        .metric .v small { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+        .metric .bar { height: 5px; background: var(--bg); border-radius: 3px; margin-top: 0.6rem; overflow: hidden; }
+        .metric .bar > div { height: 100%; border-radius: 3px; background: var(--primary); transition: width 0.4s; }
+
+        /* ── Tables ── */
+        .table { width: 100%; border-collapse: collapse; }
+        .table th {
+            text-align: left; padding: 0.6rem 0.75rem; font-size: 0.72rem; font-weight: 700;
+            color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
+            border-bottom: 1px solid var(--border);
+        }
+        .table td { padding: 0.7rem 0.75rem; border-bottom: 1px solid var(--bg); vertical-align: middle; }
+        .table tr:last-child td { border-bottom: none; }
+        .table tr:hover td { background: #fafbfe; }
+        .table .mono { font-family: var(--mono); font-size: 0.8rem; }
+
+        /* ── Logs ── */
+        pre.logs {
+            background: #0b1220; color: #cbd5e1; padding: 1rem 1.1rem; border-radius: 10px;
+            font-family: var(--mono); font-size: 0.78rem; line-height: 1.6; overflow: auto;
+            max-height: 380px; border: 1px solid #1e293b;
+        }
+        pre.logs .log-line { white-space: pre-wrap; word-break: break-all; }
+
+        /* ── Misc ── */
+        .page-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+        .page-head h2 { font-size: 1.3rem; font-weight: 800; letter-spacing: -0.02em; }
+        .flex { display: flex; align-items: center; gap: 0.6rem; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+        .mt-1 { margin-top: 0.75rem; }
+        .muted { color: var(--muted); }
+        .empty {
+            background: var(--surface); border: 1px dashed var(--border); border-radius: 14px;
+            text-align: center; padding: 3.5rem 2rem; color: var(--muted);
+        }
+        .empty .big { font-size: 2.2rem; margin-bottom: 0.5rem; }
+        .empty h3 { color: var(--text); font-weight: 700; margin-bottom: 0.3rem; }
+        .toast {
+            position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 100;
+            background: var(--text); color: #fff; padding: 0.8rem 1.1rem; border-radius: 10px;
+            font-size: 0.85rem; font-weight: 500; box-shadow: var(--shadow-lg);
+            opacity: 0; transform: translateY(10px); transition: opacity 0.2s, transform 0.2s;
+            max-width: 340px;
+        }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.error { background: var(--danger); }
+        .toast.success { background: var(--success); }
+        .spinner {
+            display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.4);
+            border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite;
+        }
+        .spinner.dark { border-color: rgba(15,23,42,0.2); border-top-color: var(--primary); }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .chart-box { position: relative; height: 260px; }
+        .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
+        .tabs .tab {
+            padding: 0.5rem 0.9rem; font-size: 0.85rem; font-weight: 600; color: var(--muted);
+            border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent;
+            font-family: inherit;
+        }
+        .tabs .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        @media (max-width: 768px) {
+            .layout { flex-direction: column; }
+            .sidebar { width: 100%; height: auto; position: static; flex-direction: row; align-items: center; }
+            .sidebar .logo { padding: 0.8rem 1rem; }
+            .sidebar nav { flex-direction: row; padding: 0; }
+            .sidebar .userbox { display: none; }
+            .sidebar .spacer { display: none; }
+            .content { padding: 1rem; }
+            .topbar { padding: 0.9rem 1rem; }
+            .grid-2 { grid-template-columns: 1fr; }
+            .app-grid { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
-    <nav>
-        <h1>⚡ Mini Heroku</h1>
-        {% if user is defined and user %}
-            <a href="/ui/">Apps</a>
-            <a href="/docs" target="_blank">API Docs</a>
-            <span style="flex:1"></span>
-            <span style="font-size:0.85rem; opacity:0.9;">{{ user.email }}</span>
-            <a href="/ui/logout">Logout</a>
-        {% else %}
-            <a href="/docs" target="_blank">API Docs</a>
-            <span style="flex:1"></span>
-            <a href="/ui/login">Sign in</a>
-        {% endif %}
-    </nav>
-    <div class="container">
-        {% block content %}{% endblock %}
+{% if user is defined and user %}
+<div class="layout">
+    <aside class="sidebar">
+        <div class="logo">
+            <span class="bolt">⚡</span>
+            <span>Mini Heroku</span>
+        </div>
+        <nav>
+            <a href="/ui/" class="{% if request.url.path == '/ui/' %}active{% endif %}">
+                <span class="icon">▦</span> Applications
+            </a>
+            <a href="/ui/deploy">
+                <span class="icon">＋</span> Deploy App
+            </a>
+            <a href="/docs" target="_blank">
+                <span class="icon">⑂</span> API Docs
+            </a>
+        </nav>
+        <div class="spacer"></div>
+        <div class="userbox">
+            <span class="avatar">{{ user.email[0]|upper }}</span>
+            <div class="meta">
+                <div class="email">{{ user.email }}</div>
+                <a class="logout" href="/ui/logout">Logout →</a>
+            </div>
+        </div>
+    </aside>
+    <div class="main">
+        <div class="topbar">
+            <h1>{% block header %}Dashboard{% endblock %}</h1>
+            <span class="crumb">{% block crumb %}{% endblock %}</span>
+        </div>
+        <div class="content">
+            {% block content %}{% endblock %}
+        </div>
     </div>
+</div>
+{% else %}
+<div class="auth-wrap">
+    {% block auth %}{% endblock %}
+</div>
+{% endif %}
+<div id="toast" class="toast"></div>
+<script>
+function toast(msg, type) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (type ? ' ' + type : '');
+    setTimeout(() => { t.className = 'toast'; }, 3200);
+}
+async function api(method, url, body) {
+    const opts = {method: method, headers: {}};
+    if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+    const r = await fetch(url, opts);
+    let data = null;
+    try { data = await r.json(); } catch (e) {}
+    if (!r.ok) throw new Error((data && data.detail) || ('HTTP ' + r.status));
+    return data;
+}
+</script>
 </body>
 </html>

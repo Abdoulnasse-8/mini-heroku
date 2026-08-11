@@ -1,36 +1,77 @@
 {% extends "base.html" %}
+{% block title %}Deploy App — Mini Heroku{% endblock %}
+{% block header %}Deploy App{% endblock %}
+{% block crumb %}git push → HTTPS{% endblock %}
 {% block content %}
-<div class="card" style="max-width:600px; margin:0 auto;">
-    <h2>🚀 Deploy New App</h2>
-    <div style="margin-top:1rem;">
-        <label style="display:block; margin-bottom:0.3rem; font-size:0.85rem; color:#666;">App Name</label>
-        <input type="text" id="app-name" placeholder="my-app" style="width:100%">
+<div class="grid-2">
+    <div class="card">
+        <h2>New application</h2>
+        <form id="deploy-form">
+            <div class="field">
+                <label for="app-name">App name</label>
+                <input type="text" id="app-name" placeholder="e.g. my-api" required pattern="[a-z0-9][a-z0-9-]*" autocomplete="off">
+                <p class="hint">Lowercase letters, numbers and dashes. This becomes your subdomain.</p>
+            </div>
+            <div class="field">
+                <label for="repo-url">Git repository URL</label>
+                <input type="text" id="repo-url" placeholder="https://github.com/user/repo.git" required autocomplete="off">
+                <p class="hint">Any HTTPS git repo containing a Dockerfile. A <code>PORT=8000</code> app is exposed automatically.</p>
+            </div>
+            <button type="submit" id="deploy-btn" class="btn btn-primary btn-lg btn-block">
+                Deploy Application
+            </button>
+            <div id="result" style="margin-top:1rem;"></div>
+        </form>
     </div>
-    <div style="margin-top:1rem;">
-        <label style="display:block; margin-bottom:0.3rem; font-size:0.85rem; color:#666;">Git Repo URL</label>
-        <input type="text" id="repo-url" placeholder="https://github.com/user/repo" style="width:100%">
+
+    <div class="card">
+        <h2>How it works</h2>
+        <ol style="padding-left:1.1rem; color:var(--muted); display:flex; flex-direction:column; gap:0.7rem; font-size:0.88rem;">
+            <li>We <strong style="color:var(--text)">clone</strong> your repository on the VM.</li>
+            <li>We <strong style="color:var(--text)">build</strong> the Docker image and push it to the local registry.</li>
+            <li>Your app is <strong style="color:var(--text)">started</strong> in an isolated container with CPU/RAM limits and auto-restart.</li>
+            <li>Caddy routes <strong style="color:var(--text)">&lt;name&gt;.68.221.16.224.sslip.io</strong> to your container.</li>
+            <li><strong style="color:var(--text)">Let's Encrypt</strong> issues an HTTPS certificate automatically.</li>
+        </ol>
+        <div class="card" style="background:var(--primary-soft); border-color:#c7d2fe; padding:0.9rem 1rem;">
+            <p style="font-size:0.82rem; color:#3730a3;">
+                <strong>Tip:</strong> a simple <code style="font-family:var(--mono);">Dockerfile</code> that listens on port 8000 is all you need.
+            </p>
+        </div>
     </div>
-    <button class="btn btn-primary" style="margin-top:1rem; width:100%; padding:10px;" onclick="deployApp()">Deploy</button>
-    <div id="result" style="margin-top:1rem;"></div>
-    <script>
-    function deployApp() {
-        const name = document.getElementById('app-name').value;
-        const repo = document.getElementById('repo-url').value;
-        document.getElementById('result').innerHTML = '<p style="color:#666">Deploying... this may take a minute.</p>';
-        fetch('/ui/deploy', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({name, repo_url: repo})
-        }).then(r => r.json()).then(d => {
-            if (d.status === 'deployed') {
-                document.getElementById('result').innerHTML =
-                    '<p style="color:green">✅ Deployed! <a href="/ui/apps/' + d.app + '">View app</a></p>';
-            } else {
-                document.getElementById('result').innerHTML =
-                    '<p style="color:red">❌ Error: ' + JSON.stringify(d) + '</p>';
-            }
-        });
-    }
-    </script>
 </div>
+
+<script>
+const form = document.getElementById('deploy-form');
+const btn = document.getElementById('deploy-btn');
+const result = document.getElementById('result');
+
+form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    const name = document.getElementById('app-name').value.trim();
+    const repo = document.getElementById('repo-url').value.trim();
+    if (!name || !repo) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Building & deploying…';
+    result.innerHTML = '<div class="card" style="background:var(--bg); border-color:var(--border); padding:0.9rem 1rem;">' +
+        '<p style="font-family:var(--mono); font-size:0.8rem; color:var(--muted); white-space:pre-wrap;">' +
+        '-----> Cloning ' + repo + '\n-----> Building Docker image…\n-----> Pushing to registry…\n-----> Starting container…</p></div>';
+    api('POST', '/ui/deploy', {name: name, repo_url: repo})
+        .then(d => {
+            result.innerHTML = '<div class="card" style="background:var(--success-soft); border-color:#a7f3d0; padding:1rem;">' +
+                '<p style="color:#065f46; font-weight:700;">✅ Deployed ' + d.app + ' (v' + d.version + ')</p>' +
+                '<p class="mt-1"><a href="https://' + d.app + '.68.221.16.224.sslip.io" target="_blank">https://' + d.app + '.68.221.16.224.sslip.io ↗</a></p>' +
+                '<a href="/ui/apps/' + d.app + '" class="btn btn-primary mt-1">Open app dashboard</a></div>';
+            btn.disabled = false;
+            btn.textContent = 'Deploy Application';
+        })
+        .catch(e => {
+            result.innerHTML = '<div class="card" style="background:var(--danger-soft); border-color:#fecaca; padding:1rem;">' +
+                '<p style="color:#991b1b; font-weight:700;">❌ Deployment failed</p>' +
+                '<p class="mt-1 muted" style="font-family:var(--mono); font-size:0.8rem;">' + e.message + '</p></div>';
+            btn.disabled = false;
+            btn.textContent = 'Deploy Application';
+        });
+});
+</script>
 {% endblock %}

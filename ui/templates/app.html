@@ -1,157 +1,269 @@
 {% extends "base.html" %}
+{% block title %}{{ app.name }} — Mini Heroku{% endblock %}
+{% block header %}<span class="mono" style="font-family:var(--mono);">{{ app.name }}</span> <span class="badge badge-{{ app.status }}">{{ app.status }}</span>{% endblock %}
+{% block crumb %}Application detail{% endblock %}
 {% block content %}
-<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
-    <div>
-        <h2>{{ app.name }} <span class="badge badge-{{ app.status }}">{{ app.status }}</span></h2>
-        <a href="https://{{ app.name }}.68.221.16.224.sslip.io" target="_blank" class="url-link">https://{{ app.name }}.68.221.16.224.sslip.io ↗</a>
-    </div>
+<div class="page-head">
+    <h2>
+        {{ app.name }}
+        <span class="badge badge-{{ app.status }}">{{ app.status }}</span>
+    </h2>
     <div class="flex">
-        <button class="btn btn-primary" onclick="location.href='/ui/apps/{{ app.name }}/redeploy'">🔄 Redeploy</button>
-        <button class="btn btn-secondary" onclick="location.reload()">↻ Refresh</button>
-    </div>
-</div>
-
-<div class="grid-2">
-    <!-- Métriques -->
-    <div class="card">
-        <h2>📊 Metrics</h2>
-        {% if metrics %}
-        <p>CPU: <strong>{{ metrics.cpu_percent }}%</strong></p>
-        <div class="metric-bar mt-1"><div class="metric-fill" style="width:{{ [metrics.cpu_percent, 100]|min }}%"></div></div>
-        <p style="margin-top:0.8rem">Memory: <strong>{{ metrics.memory_mb }}MB / {{ metrics.memory_limit_mb }}MB ({{ metrics.memory_percent }}%)</strong></p>
-        <div class="metric-bar mt-1"><div class="metric-fill" style="width:{{ metrics.memory_percent }}%"></div></div>
+        <a class="btn btn-primary" href="https://{{ app.name }}.68.221.16.224.sslip.io" target="_blank">Open ↗</a>
+        <button class="btn btn-secondary" onclick="redeployApp()" id="redeploy-btn">↻ Redeploy</button>
+        <button class="btn btn-secondary" onclick="location.reload()">Refresh</button>
+        {% if app.status == 'running' %}
+        <button class="btn btn-danger" onclick="doStop()">Stop</button>
         {% else %}
-        <p style="color:#888">App is stopped — no metrics available.</p>
+        <button class="btn btn-success" onclick="doStart()">Start</button>
         {% endif %}
     </div>
+</div>
 
-    <!-- Scaling -->
-    <div class="card">
-        <h2>⚖️ Scaling</h2>
-        <p>Current replicas: <strong>{{ app.replicas }}</strong></p>
-        <div class="flex mt-1">
-            <input type="number" id="replicas" value="{{ app.replicas }}" min="1" max="5" style="width:70px">
-            <button class="btn btn-primary" onclick="scaleApp()">Scale</button>
-        </div>
-        <script>
-        function scaleApp() {
-            const n = document.getElementById('replicas').value;
-            fetch('/ui/apps/{{ app.name }}/scale', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({replicas: parseInt(n)})
-            }).then(() => location.reload());
-        }
-        </script>
+<div class="metric-row">
+    <div class="metric">
+        <div class="k">CPU usage</div>
+        <div class="v"><span id="cpu-v">—</span><small>%</small></div>
+        <div class="bar"><div id="cpu-bar" style="width:0%"></div></div>
+    </div>
+    <div class="metric">
+        <div class="k">Memory</div>
+        <div class="v"><span id="mem-v">—</span><small> MB</small></div>
+        <div class="bar"><div id="mem-bar" style="width:0%"></div></div>
+    </div>
+    <div class="metric">
+        <div class="k">Replicas</div>
+        <div class="v">{{ app.replicas }}</div>
+        <div class="bar"><div style="width:100%; background:var(--success);"></div></div>
+    </div>
+    <div class="metric">
+        <div class="k">Port</div>
+        <div class="v">{{ app.port if app.port else '—' }}</div>
+        <div class="bar"><div style="width:100%; background:var(--warning);"></div></div>
     </div>
 </div>
 
-<div class="grid-2">
-    <!-- Env vars -->
+<div class="card">
+    <h2>📈 Live metrics <span class="sub">polling every 3s — last 60 samples</span></h2>
+    <div class="chart-box"><canvas id="metrics-chart"></canvas></div>
+    <p class="hint" id="metrics-hint">Collecting live metrics…</p>
+</div>
+
+<div class="tabs">
+    <button class="tab active" data-tab="config">Configuration</button>
+    <button class="tab" data-tab="domains">Domains</button>
+    <button class="tab" data-tab="releases">Releases</button>
+    <button class="tab" data-tab="logs">Logs</button>
+</div>
+
+<!-- Config / env vars -->
+<div class="tab-panel active" id="panel-config">
     <div class="card">
-        <h2>🔧 Environment Variables</h2>
+        <h2>Environment variables</h2>
+        <div id="env-list">
         {% for key, val in config.items() %}
+            <div class="flex" style="justify-content:space-between; padding:0.45rem 0; border-bottom:1px solid var(--bg);">
+                <code style="font-family:var(--mono); font-size:0.82rem;">{{ key }} <span class="muted">= {{ val }}</span></code>
+                <button class="btn btn-danger btn-sm" onclick="unsetVar('{{ key }}')">Remove</button>
+            </div>
+        {% else %}
+            <p class="muted" style="padding:0.5rem 0;">No environment variables set.</p>
+        {% endfor %}
+        </div>
         <div class="flex mt-1">
-            <code style="flex:1; background:#f8f9fa; padding:4px 8px; border-radius:4px; font-size:0.85rem;">{{ key }} = {{ val }}</code>
-            <button class="btn btn-danger" onclick="unsetVar('{{ key }}')">✕</button>
+            <input type="text" id="env-key" placeholder="KEY" style="width:140px;" class="field">
+            <input type="text" id="env-val" placeholder="value" class="field" style="flex:1;">
+            <button class="btn btn-success" onclick="setVar()">Add variable</button>
         </div>
-        {% endfor %}
-        <div class="flex" style="margin-top:0.8rem">
-            <input type="text" id="env-key" placeholder="KEY" style="width:120px">
-            <input type="text" id="env-val" placeholder="value">
-            <button class="btn btn-success" onclick="setVar()">Add</button>
-        </div>
-        <script>
-        function setVar() {
-            const k = document.getElementById('env-key').value;
-            const v = document.getElementById('env-val').value;
-            fetch('/ui/apps/{{ app.name }}/config', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({key: k, value: v})
-            }).then(() => location.reload());
-        }
-        function unsetVar(key) {
-            fetch('/ui/apps/{{ app.name }}/config/' + key, {method: 'DELETE'})
-            .then(() => location.reload());
-        }
-        </script>
     </div>
+</div>
 
-    <!-- Custom domains -->
+<!-- Domains -->
+<div class="tab-panel" id="panel-domains">
     <div class="card">
-        <h2>🌐 Custom Domains</h2>
-        {% for d in domains %}
-        <div class="flex mt-1" style="justify-content:space-between">
-            <code style="flex:1; background:#f8f9fa; padding:4px 8px; border-radius:4px; font-size:0.85rem;">{{ d }}</code>
-            <button class="btn btn-danger" onclick="removeDomain('{{ d }}')">✕</button>
-        </div>
-        {% endfor %}
-        <div class="flex" style="margin-top:0.8rem">
-            <input type="text" id="domain-input" placeholder="app.example.com" style="flex:1">
-            <button class="btn btn-success" onclick="addDomain()">Add</button>
-        </div>
-        <p style="font-size:0.75rem; color:#888; margin-top:0.5rem;">
-            Point your DNS A/AAAA record to 68.221.16.224 — HTTPS is automatic (Let's Encrypt).
+        <h2>Custom domains</h2>
+        <p class="hint" style="margin-bottom:0.8rem;">
+            Point your DNS A/AAAA record to <strong>68.221.16.224</strong> — Let's Encrypt handles the HTTPS certificate automatically.
         </p>
-        <script>
-        function addDomain() {
-            const d = document.getElementById('domain-input').value;
-            fetch('/ui/apps/{{ app.name }}/domains', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({domain: d})
-            }).then(() => location.reload());
-        }
-        function removeDomain(domain) {
-            fetch('/ui/apps/{{ app.name }}/domains/' + encodeURIComponent(domain), {method: 'DELETE'})
-            .then(() => location.reload());
-        }
-        </script>
-    </div>
-
-    <!-- Releases -->
-    <div class="card">
-        <h2>🚀 Releases</h2>
-        {% for r in releases %}
-        <div class="flex mt-1" style="justify-content:space-between">
-            <span><strong>v{{ r.version }}</strong> — {{ r.deployed_at.strftime('%Y-%m-%d %H:%M') }}</span>
-            {% if not loop.last %}
-            <button class="btn btn-secondary" onclick="rollback({{ r.version }})" style="padding:2px 8px; font-size:0.75rem">Rollback</button>
-            {% else %}
-            <span class="badge badge-running">current</span>
-            {% endif %}
-        </div>
+        <div id="domain-list">
+        {% for d in domains %}
+            <div class="flex" style="justify-content:space-between; padding:0.45rem 0; border-bottom:1px solid var(--bg);">
+                <code style="font-family:var(--mono); font-size:0.82rem;">{{ d }}</code>
+                <button class="btn btn-danger btn-sm" onclick="removeDomain('{{ d }}')">Remove</button>
+            </div>
+        {% else %}
+            <p class="muted" style="padding:0.5rem 0;">No custom domains — your app is on <code style="font-family:var(--mono);">{{ app.name }}.68.221.16.224.sslip.io</code>.</p>
         {% endfor %}
-        <script>
-        function rollback(v) {
-            fetch('/ui/apps/{{ app.name }}/rollback/' + v, {method: 'POST'})
-            .then(() => location.reload());
-        }
-        </script>
+        </div>
+        <div class="flex mt-1">
+            <input type="text" id="domain-input" placeholder="app.example.com" class="field" style="flex:1;">
+            <button class="btn btn-success" onclick="addDomain()">Add domain</button>
+        </div>
+    </div>
+</div>
+
+<!-- Releases -->
+<div class="tab-panel" id="panel-releases">
+    <div class="card">
+        <h2>Release history</h2>
+        <table class="table">
+            <thead><tr><th>Version</th><th>Deployed</th><th>Image</th><th></th></tr></thead>
+            <tbody>
+            {% for r in releases %}
+                <tr>
+                    <td><span class="badge {% if loop.first %}badge-running{% else %}badge-stopped{% endif %}">v{{ r.version }}</span></td>
+                    <td class="mono">{{ r.deployed_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td class="mono muted">{{ r.image }}</td>
+                    <td style="text-align:right;">
+                        {% if not loop.first %}
+                        <button class="btn btn-secondary btn-sm" onclick="rollback({{ r.version }})">Rollback</button>
+                        {% else %}<span class="muted" style="font-size:0.75rem;">current</span>{% endif %}
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4" class="muted">No releases yet.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 
 <!-- Logs -->
-<div class="card">
-    <h2>📋 Logs <button class="btn btn-secondary" onclick="loadLogs()" style="margin-left:0.5rem">↻ Refresh</button></h2>
-    <pre id="log-output">Loading logs...</pre>
-    <script>
-    function loadLogs() {
-        const pre = document.getElementById('log-output');
-        pre.textContent = 'Loading...';
-        fetch('/ui/apps/{{ app.name }}/logs')
-        .then(r => r.text())
-        .then(t => {
-            const lines = t.split('\n')
-                .filter(l => l.startsWith('data: '))
-                .map(l => l.slice(6));
-            pre.textContent = lines.join('\n') || '(no logs)';
-            pre.scrollTop = pre.scrollHeight;
-        });
-    }
-    loadLogs();
-    setInterval(loadLogs, 5000);
-    </script>
+<div class="tab-panel" id="panel-logs">
+    <div class="card">
+        <h2>Application logs <span class="sub">auto-refresh 5s</span></h2>
+        <pre class="logs" id="log-output">Loading logs…</pre>
+    </div>
 </div>
+
+<script>
+const APP = '{{ app.name }}';
+
+/* ── Tabs ── */
+document.querySelectorAll('.tabs .tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.tabs .tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('panel-' + t.dataset.tab).classList.add('active');
+}));
+
+/* ── Metrics chart ── */
+let ctx = document.getElementById('metrics-chart');
+let chart = null;
+const MAX_POINTS = 60;
+const cpuData = [], memData = [], timeLabels = [];
+
+function ensureChart() {
+    if (chart) return;
+    chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: timeLabels,
+            datasets: [
+                { label: 'CPU %', data: cpuData, borderColor: '#6366f1', backgroundColor: 'rgba(99,102,241,0.12)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+                { label: 'Memory MB', data: memData, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.10)', fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2, yAxisID: 'yMem' }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false, animation: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: { legend: { labels: { boxWidth: 12, usePointStyle: true, font: { size: 11 } } } },
+            scales: {
+                x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 } } },
+                y: { position: 'left', beginAtZero: true, suggestedMax: 100, title: { display: true, text: 'CPU %', font: { size: 10 } }, grid: { color: '#f1f5f9' } },
+                yMem: { position: 'right', beginAtZero: true, title: { display: true, text: 'Memory MB', font: { size: 10 } }, grid: { drawOnChartArea: false } }
+            }
+        }
+    });
+}
+
+function updateChart() {
+    if (chart) chart.update('none');
+}
+
+async function pollMetrics() {
+    try {
+        const m = await api('GET', '/apps/' + APP + '/metrics');
+        const now = new Date().toLocaleTimeString();
+        cpuData.push(m.cpu_percent);
+        memData.push(m.memory_mb);
+        timeLabels.push(now);
+        if (cpuData.length > MAX_POINTS) { cpuData.shift(); memData.shift(); timeLabels.shift(); }
+        ensureChart();
+        updateChart();
+        document.getElementById('cpu-v').textContent = m.cpu_percent;
+        document.getElementById('cpu-bar').style.width = Math.min(m.cpu_percent, 100) + '%';
+        document.getElementById('mem-v').textContent = m.memory_mb;
+        document.getElementById('mem-bar').style.width = Math.min(m.memory_percent, 100) + '%';
+        document.getElementById('metrics-hint').textContent =
+            'Live from container app-' + APP + ' — mem limit ' + m.memory_limit_mb + ' MB';
+    } catch (e) {
+        document.getElementById('metrics-hint').textContent = 'Metrics unavailable (app stopped or no container yet).';
+    }
+}
+pollMetrics();
+setInterval(pollMetrics, 3000);
+
+/* ── Actions ── */
+function redeployApp() {
+    const btn = document.getElementById('redeploy-btn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+    api('POST', '/ui/apps/' + APP + '/redeploy')
+        .then(() => { toast('Redeploying ' + APP + ' — this may take a minute', 'success'); setTimeout(() => location.reload(), 1500); })
+        .catch(e => { btn.disabled = false; btn.textContent = '↻ Redeploy'; toast(e.message, 'error'); });
+}
+function doStop() {
+    if (!confirm('Stop app "' + APP + '"?')) return;
+    api('POST', '/ui/apps/' + APP + '/stop').then(() => location.reload()).catch(e => toast(e.message, 'error'));
+}
+function doStart() {
+    api('POST', '/ui/apps/' + APP + '/restart').then(() => { toast(APP + ' restarted', 'success'); location.reload(); }).catch(e => toast(e.message, 'error'));
+}
+function setVar() {
+    const k = document.getElementById('env-key').value.trim();
+    const v = document.getElementById('env-val').value.trim();
+    if (!k) { toast('Key required', 'error'); return; }
+    api('POST', '/ui/apps/' + APP + '/config', {key: k, value: v})
+        .then(() => location.reload()).catch(e => toast(e.message, 'error'));
+}
+function unsetVar(key) {
+    if (!confirm('Remove env var "' + key + '"?')) return;
+    api('DELETE', '/ui/apps/' + APP + '/config/' + encodeURIComponent(key))
+        .then(() => location.reload()).catch(e => toast(e.message, 'error'));
+}
+function addDomain() {
+    const d = document.getElementById('domain-input').value.trim();
+    if (!d) { toast('Domain required', 'error'); return; }
+    api('POST', '/ui/apps/' + APP + '/domains', {domain: d})
+        .then(() => { toast('Domain added — DNS + Let\'s Encrypt will pick it up', 'success'); location.reload(); })
+        .catch(e => toast(e.message, 'error'));
+}
+function removeDomain(d) {
+    if (!confirm('Remove domain "' + d + '"?')) return;
+    api('DELETE', '/ui/apps/' + APP + '/domains/' + encodeURIComponent(d))
+        .then(() => location.reload()).catch(e => toast(e.message, 'error'));
+}
+function rollback(v) {
+    if (!confirm('Rollback to v' + v + '?')) return;
+    api('POST', '/ui/apps/' + APP + '/rollback/' + v)
+        .then(() => { toast('Rolled back to v' + v, 'success'); location.reload(); })
+        .catch(e => toast(e.message, 'error'));
+}
+
+/* ── Logs ── */
+async function loadLogs() {
+    const pre = document.getElementById('log-output');
+    try {
+        const t = await (await fetch('/ui/apps/' + APP + '/logs')).text();
+        const lines = t.split('\n').filter(l => l.startsWith('data: ')).map(l => l.slice(6));
+        pre.innerHTML = lines.map(l => '<div class="log-line">' + l.replace(/</g, '&lt;') + '</div>').join('') || '<div class="log-line muted">(no logs)</div>';
+        pre.scrollTop = pre.scrollHeight;
+    } catch (e) {
+        pre.textContent = 'Failed to load logs.';
+    }
+}
+document.querySelector('.tab[data-tab="logs"]').addEventListener('click', loadLogs);
+loadLogs();
+setInterval(loadLogs, 5000);
+</script>
 {% endblock %}
