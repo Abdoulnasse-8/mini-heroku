@@ -10,15 +10,18 @@ def build_and_push(repo_url: str, app_name: str, version: int) -> str:
     if os.path.exists(build_dir):
         shutil.rmtree(build_dir)
 
-    subprocess.run(["/usr/bin/git", "clone", repo_url, build_dir], check=True)
+    subprocess.run(["/usr/bin/git", "clone", repo_url, build_dir], check=True, timeout=120)
 
     if not os.path.exists(f"{build_dir}/Dockerfile"):
         raise Exception(f"No Dockerfile found in {repo_url}")
 
     print(f"[builder] Building image {image_tag}...")
     result = subprocess.run(
-        ["/usr/bin/docker", "build", "-t", image_tag, build_dir],
-        capture_output=True, text=True
+        ["/usr/bin/docker", "build",
+         "--memory", "2g",
+         "--cpu-quota", "150000",
+         "-t", image_tag, build_dir],
+        capture_output=True, text=True, timeout=600
     )
     if result.returncode != 0:
         raise Exception(f"Docker build failed:\n{result.stderr}")
@@ -26,7 +29,7 @@ def build_and_push(repo_url: str, app_name: str, version: int) -> str:
     print(f"[builder] Pushing to registry...")
     push_result = subprocess.run(
         ["/usr/bin/docker", "push", image_tag],
-        capture_output=True, text=True
+        capture_output=True, text=True, timeout=120
     )
     if push_result.returncode != 0:
         raise Exception(f"Docker push failed:\n{push_result.stderr}")
