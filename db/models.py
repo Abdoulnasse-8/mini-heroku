@@ -98,7 +98,10 @@ def _migrate():
         for uid, tok in conn.execute(text("SELECT id, token FROM users")).fetchall():
             if tok and not tok.startswith("sha256$"):
                 hashed = "sha256$" + hashlib.sha256(tok.encode()).hexdigest()
-                conn.execute(text("UPDATE users SET token = ? WHERE id = ?"), (hashed, uid))
+                conn.execute(
+                    text("UPDATE users SET token = :hashed WHERE id = :uid"),
+                    {"hashed": hashed, "uid": uid},
+                )
         conn.commit()
 
 def init_db():

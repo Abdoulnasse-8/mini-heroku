@@ -122,3 +122,19 @@ def test_docs_available_in_dev():
     r = TestClient(app).get("/docs")
     assert r.status_code == 200
     assert "swagger" in r.text.lower()
+
+
+# ── MIGRATION : hasher les tokens legacy en clair ─────────
+def test_migrate_hashes_legacy_tokens(client):
+    import hashlib
+    from db.models import _migrate
+    db = SessionLocal()
+    db.add(User(email="legacy@x.com", password="x", token="legacy-plaintext-token"))
+    db.commit()
+    db.close()
+    _migrate()
+    db = SessionLocal()
+    u = db.query(User).filter(User.email == "legacy@x.com").first()
+    assert u.token.startswith("sha256$")
+    assert u.token == "sha256$" + hashlib.sha256(b"legacy-plaintext-token").hexdigest()
+    db.close()
