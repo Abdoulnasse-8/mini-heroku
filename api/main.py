@@ -430,14 +430,13 @@ def deploy(req: DeployRequest, db: Session = Depends(get_db),
         raise HTTPException(502, f"Build failed: {e}")
     env_vars = get_env_vars(name, db)
     port = run_container(name, image, env_vars)
-    if not wait_healthy(port):
-        stop_container(name)
-        audit("deploy", name, {"error": "health check failed after deploy"}, "error")
-        raise HTTPException(502, "App did not become healthy within 30s — check the Dockerfile / logs")
+    # On enregistre l'app AVANT le health-check : si elle a besoin d'un add-on
+    # ou d'une config pour démarrer (ex: backend Spring Boot), l'échec laisse
+    # une app managable → attacher l'add-on / configurer puis redéployer.
     app_row = db.query(App).filter(App.name == name).first()
     if not app_row:
         app_row = App(name=name, owner_email=user.email, repo_url=repo_url,
-                      dockerfile=dockerfile, status="running", port=port, image=image)
+                      dockerfile=dockerfile, status="starting", port=port, image=image)
         db.add(app_row)
     else:
         if app_row.owner_email not in (None, user.email):
@@ -445,11 +444,19 @@ def deploy(req: DeployRequest, db: Session = Depends(get_db),
         app_row.owner_email = user.email
         app_row.repo_url = repo_url
         app_row.dockerfile = dockerfile
-        app_row.status = "running"
+        app_row.status = "starting"
         app_row.port = port
         app_row.image = image
     release = Release(app_name=name, version=version, image=image)
     db.add(release)
+    db.commit()
+    if not wait_healthy(port):
+        stop_container(name)
+        app_row.status = "failed"
+        db.commit()
+        audit("deploy", name, {"error": "health check failed after deploy"}, "error")
+        raise HTTPException(502, "App did not become healthy within 30s — attach the needed add-on/config, then redeploy")
+    app_row.status = "running"
     db.commit()
     _refresh_caddy(db)
     audit("deploy", name, {"version": version, "port": port, "image": image})
