@@ -13,8 +13,10 @@ def _ensure_addon_network():
         client.networks.create(config.ADDON_NETWORK, driver="bridge")
         print(f"[runner] Created network {config.ADDON_NETWORK}")
 
-def wait_healthy(port: int, timeout: int = 30) -> bool:
+def wait_healthy(port: int, timeout: int = None) -> bool:
     """Poll http://localhost:port until it answers with status < 500, or timeout."""
+    if timeout is None:
+        timeout = config.HEALTH_TIMEOUT
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:

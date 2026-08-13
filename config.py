@@ -51,6 +51,9 @@ REGISTER_RATE_WINDOW = int(_env("MINIHEROKU_REGISTER_RATE_WINDOW", "3600"))
 # Réseau Docker interne reliant apps et add-ons
 ADDON_NETWORK = _env("MINIHEROKU_ADDON_NETWORK", "mh_addons")
 
+# Délai de health-check au démarrage des apps (suffisant pour les JVM lentes)
+HEALTH_TIMEOUT = int(_env("MINIHEROKU_HEALTH_TIMEOUT", "90"))
+
 # Répertoire de backup (scripts/backup.py)
 BACKUP_DIR = _env("MINIHEROKU_BACKUP_DIR", os.path.join(BASE_DIR, "..", "mini-heroku-backups"))
 BACKUP_KEEP = int(_env("MINIHEROKU_BACKUP_KEEP", "10"))
