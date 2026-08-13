@@ -24,8 +24,18 @@ templates = Jinja2Templates(directory=os.environ.get(
 templates.env.globals["base_domain"] = config.BASE_DOMAIN
 templates.env.globals["docs_enabled"] = not config.IS_PRODUCTION
 
-def _set_csrf(resp) -> None:
-    resp.set_cookie("mh_csrf", create_csrf_token(), samesite="lax", httponly=False)
+def _set_csrf(resp, token: str | None = None) -> None:
+    resp.set_cookie("mh_csrf", token or create_csrf_token(), samesite="lax",
+                    httponly=False)
+
+def _csrf_page(request, name: str, **context):
+    """Rend une page avec UN seul token CSRF partagé entre le formulaire et
+    le cookie (sinon le double-submit échoue toujours)."""
+    token = create_csrf_token()
+    resp = templates.TemplateResponse(request=request, name=name,
+                                      context={**context, "csrf_token": token})
+    _set_csrf(resp, token)
+    return resp
 
 def _login_success(resp, user: User, db: Session) -> None:
     raw_token = create_token()
@@ -40,51 +50,44 @@ def _login_success(resp, user: User, db: Session) -> None:
 # ── LOGIN / LOGOUT ───────────────────────────────────────
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    resp = templates.TemplateResponse(
-        request=request, name="login.html",
-        context={"error": None, "csrf_token": create_csrf_token()})
-    _set_csrf(resp)
-    return resp
+    return _csrf_page(request, "login.html", error=None)
+
+async def _get_form(request: Request):
+    """Le middleware CSRF a déjà parsé le body (BaseHTTPMiddleware le
+    consomme) — on relit son résultat depuis request.state."""
+    form = getattr(request.state, "csrf_form", None)
+    if form is not None:
+        return form
+    return await request.form()
+
 
 @router.post("/login")
 async def ui_login(request: Request, db: Session = Depends(get_db)):
     _rate_limit(login_limiter, request)
-    form = await request.form()
+    form = await _get_form(request)
     email = (form.get("email") or "").strip().lower()
     password = form.get("password") or ""
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(password, user.password):
-        resp = templates.TemplateResponse(
-            request=request, name="login.html",
-            context={"error": "Invalid email or password",
-                     "csrf_token": create_csrf_token()})
-        _set_csrf(resp)
-        return resp
+        return _csrf_page(request, "login.html",
+                          error="Invalid email or password")
     resp = RedirectResponse(url="/ui/", status_code=303)
     _login_success(resp, user, db)
     return resp
 
 @router.get("/register", response_class=HTMLResponse)
 def register_page(request: Request):
-    resp = templates.TemplateResponse(
-        request=request, name="register.html",
-        context={"error": None, "csrf_token": create_csrf_token()})
-    _set_csrf(resp)
-    return resp
+    return _csrf_page(request, "register.html", error=None)
 
 @router.post("/register")
 async def ui_register(request: Request, db: Session = Depends(get_db)):
     from api.main import audit
     _rate_limit(register_limiter, request)
-    form = await request.form()
+    form = await _get_form(request)
     email = (form.get("email") or "").strip().lower()
     password = form.get("password") or ""
     def _err(msg):
-        resp = templates.TemplateResponse(
-            request=request, name="register.html",
-            context={"error": msg, "csrf_token": create_csrf_token()})
-        _set_csrf(resp)
-        return resp
+        return _csrf_page(request, "register.html", error=msg)
     if not email or "@" not in email:
         return _err("Invalid email")
     if len(password) < 8:

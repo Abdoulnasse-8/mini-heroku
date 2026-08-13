@@ -71,6 +71,7 @@ async def csrf_middleware(request: Request, call_next):
         if path in ("/ui/login", "/ui/register"):
             form_token = (await request.form()).get("csrf_token")
             cookie_token = request.cookies.get("mh_csrf")
+            request.state.csrf_form = await request.form()
             if not form_token or not cookie_token or \
                     not hmac.compare_digest(form_token, cookie_token):
                 return JSONResponse(status_code=403,

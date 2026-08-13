@@ -266,6 +266,34 @@ def test_ui_csrf_protected(client):
     assert r.status_code == 401
 
 
+def test_ui_csrf_form_token_matches_cookie(client):
+    # Scénario navigateur réel : le token hidden du formulaire DOIT être
+    # identique au cookie mh_csrf (sinon le double-submit échoue toujours).
+    r = client.get("/ui/login")
+    assert r.status_code == 200
+    import re
+    m = re.search(r'name="csrf_token" value="([^"]+)"', r.text)
+    assert m, "login form must render a hidden csrf_token"
+    form_token = m.group(1)
+    cookie_token = client.cookies.get("mh_csrf")
+    assert form_token == cookie_token, \
+        "form token and cookie must be the same value"
+    # le login réel (creds valides) réussit avec le token du formulaire
+    from api.security import hash_password
+    from db.models import User
+    db = SessionLocal()
+    db.add(User(email="csrf@test.local",
+                password=hash_password("password123")))
+    db.commit()
+    r = client.post("/ui/login",
+                    data={"email": "csrf@test.local",
+                          "password": "password123",
+                          "csrf_token": form_token})
+    # TestClient suit le 303 → on atterrit sur le dashboard, PAS sur le login
+    assert r.status_code == 200
+    assert "Sign in" not in r.text, "should not be back on the login page"
+
+
 # ── ADD-ONS ──────────────────────────────────────────────
 def _noop(*a, **k):
     return None
