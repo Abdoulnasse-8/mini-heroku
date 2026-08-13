@@ -701,9 +701,12 @@ from api.ui import router as ui_router
 app.include_router(ui_router)
 
 @app.get("/")
-def root():
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/ui/")
+def root(request: Request):
+    from api.ui import templates
+    if request.cookies.get("mh_token"):
+        return RedirectResponse(url="/ui/")
+    return templates.TemplateResponse(request=request, name="landing.html",
+                                      context={})
 
 # ── AUDIT LOG ────────────────────────────────────────────
 def audit(action: str, app_name: str, details: dict, status: str = "success"):

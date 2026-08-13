@@ -1,29 +1,49 @@
 {% extends "base.html" %}
 {% block title %}Create account — Mini Heroku{% endblock %}
 {% block auth %}
-<div class="auth-card">
-    <div class="auth-logo">⚡</div>
-    <h1>Create your account</h1>
-    <p class="sub">Start deploying apps in minutes</p>
-    {% if error %}
-    <div class="card" style="background:var(--danger-soft); border-color:#fecaca; padding:0.7rem 0.9rem; margin-bottom:1rem;">
-        <p style="color:#991b1b; font-size:0.82rem; font-weight:600;">{{ error }}</p>
+<div class="auth-shell">
+    <div class="auth-brand">
+        <div class="logo"><span class="bolt">⚡</span> Mini Heroku</div>
+        <div class="hero">
+            <h2>Ship your first app<br>in minutes.</h2>
+            <p>One account, a Git repo and a Dockerfile — we handle the build, the routing, the HTTPS and the databases.</p>
+        </div>
+        <ul class="points">
+            <li><span class="ck">✓</span> Live metrics &amp; streaming logs</li>
+            <li><span class="ck">✓</span> Scale replicas with zero code</li>
+            <li><span class="ck">✓</span> Secure tokens, CSRF &amp; rate-limiting</li>
+            <li><span class="ck">✓</span> Free forever — runs on your own VM</li>
+        </ul>
+        <div class="foot">⚡ PFA · ENSA Khouribga</div>
     </div>
-    {% endif %}
-    <form method="POST" action="/ui/register">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div class="field">
-            <label for="email">Email</label>
-            <input type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email">
+    <div class="auth-form">
+        <div class="form-head">
+            <h1>Create your account</h1>
+            <p class="sub">Start deploying apps in minutes</p>
         </div>
-        <div class="field">
-            <label for="password">Password</label>
-            <input type="password" id="password" name="password" placeholder="Minimum 8 characters" required minlength="8" autocomplete="new-password">
+        {% if error %}
+        <div class="card" style="background:var(--danger-soft); border-color:#fecaca; padding:0.7rem 0.9rem; margin-bottom:1rem;">
+            <p style="color:#991b1b; font-size:0.82rem; font-weight:600;">{{ error }}</p>
         </div>
-        <button class="btn btn-primary btn-lg btn-block" type="submit">Create account</button>
-    </form>
-    <p class="muted" style="text-align:center; margin-top:1.2rem; font-size:0.85rem;">
-        Already have an account? <a href="/ui/login">Sign in</a>
-    </p>
+        {% endif %}
+        <form method="POST" action="/ui/register">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="field">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email">
+            </div>
+            <div class="field">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Minimum 8 characters" required minlength="8" autocomplete="new-password">
+            </div>
+            <button class="btn btn-primary btn-lg btn-block" type="submit">Create account</button>
+        </form>
+        <p class="muted" style="text-align:center; margin-top:1.2rem; font-size:0.85rem;">
+            Already have an account? <a href="/ui/login">Sign in</a>
+        </p>
+        <p class="muted" style="text-align:center; margin-top:0.7rem; font-size:0.8rem;">
+            <a href="/">← Back to home</a>
+        </p>
+    </div>
 </div>
 {% endblock %}

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Mini Heroku{% endblock %}</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%236366f1'/><text x='50' y='68' font-size='58' text-anchor='middle'>⚡</text></svg>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -39,6 +40,9 @@
             font-size: 14px;
             line-height: 1.5;
         }
+        ::selection { background: rgba(99, 102, 241, 0.25); }
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; border: 2px solid var(--bg); }
         a { color: var(--primary); text-decoration: none; }
         a:hover { text-decoration: underline; }
 
@@ -91,20 +95,38 @@
         .topbar h1 { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.01em; }
         .topbar .crumb { color: var(--muted); font-size: 0.8rem; }
         .content { padding: 2rem; max-width: 1200px; width: 100%; margin: 0 auto; }
+        .content, .auth-wrap { animation: fadein 0.3s ease; }
+        @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
         /* ── Auth pages (no sidebar) ── */
         .auth-wrap { min-height: 100vh; display: grid; place-items: center; padding: 2rem; }
-        .auth-card {
-            width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--border);
-            border-radius: 16px; padding: 2.25rem; box-shadow: var(--shadow-lg);
+        .auth-shell {
+            width: 100%; max-width: 960px; min-height: 560px; display: grid; grid-template-columns: 1.05fr 1fr;
+            background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+            box-shadow: var(--shadow-lg); overflow: hidden;
         }
-        .auth-card .auth-logo {
-            width: 48px; height: 48px; border-radius: 12px; margin: 0 auto 1rem;
-            background: linear-gradient(135deg, #818cf8, #6366f1);
-            display: grid; place-items: center; font-size: 1.3rem; color: #fff;
+        .auth-brand {
+            background: radial-gradient(120% 120% at 15% 0%, #312e81 0%, #1e1b4b 45%, #0f172a 100%);
+            color: #e0e7ff; padding: 2.6rem 2.4rem; display: flex; flex-direction: column;
         }
-        .auth-card h1 { text-align: center; font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 0.25rem; }
-        .auth-card .sub { text-align: center; color: var(--muted); font-size: 0.85rem; margin-bottom: 1.75rem; }
+        .auth-brand .logo { display: flex; align-items: center; gap: 0.6rem; font-weight: 800; font-size: 1.1rem; color: #fff; }
+        .auth-brand .logo .bolt { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, #818cf8, #6366f1);
+            display: grid; place-items: center; font-size: 1rem; box-shadow: 0 6px 18px rgba(99,102,241,0.5); }
+        .auth-brand .hero { margin-top: 2.6rem; }
+        .auth-brand .hero h2 { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.2; }
+        .auth-brand .hero p { color: #a5b4fc; font-size: 0.9rem; margin-top: 0.8rem; line-height: 1.6; }
+        .auth-brand .points { margin-top: 2rem; display: flex; flex-direction: column; gap: 0.85rem; }
+        .auth-brand .points li { display: flex; gap: 0.7rem; align-items: flex-start; font-size: 0.88rem; color: #c7d2fe; list-style: none; }
+        .auth-brand .points li .ck { width: 20px; height: 20px; border-radius: 6px; background: rgba(52,211,153,0.18);
+            display: grid; place-items: center; color: #34d399; font-size: 0.72rem; flex-shrink: 0; }
+        .auth-brand .foot { margin-top: auto; font-size: 0.8rem; color: #818cf8; }
+        .auth-form { padding: 2.6rem 2.6rem; display: flex; flex-direction: column; justify-content: center; }
+        .auth-form .form-head { margin-bottom: 1.6rem; }
+        .auth-form .form-head h1 { font-size: 1.45rem; font-weight: 800; letter-spacing: -0.02em; }
+        .auth-form .form-head .sub { color: var(--muted); font-size: 0.88rem; margin-top: 0.3rem; }
+        .auth-card { width: 100%; }
+        .auth-card h1 { font-size: 1.45rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 0.25rem; }
+        .auth-card .sub { color: var(--muted); font-size: 0.88rem; margin-bottom: 1.75rem; }
 
         /* ── Cards ── */
         .card {
@@ -265,6 +287,9 @@
             .topbar { padding: 0.9rem 1rem; }
             .grid-2 { grid-template-columns: 1fr; }
             .app-grid { grid-template-columns: 1fr; }
+            .auth-shell { grid-template-columns: 1fr; max-width: 440px; }
+            .auth-brand { display: none; }
+            .auth-form { padding: 2rem 1.6rem; }
         }
     </style>
 </head>

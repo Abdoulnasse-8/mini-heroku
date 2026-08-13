@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini Heroku — Deploy apps in one click</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%236366f1'/><text x='50' y='68' font-size='58' text-anchor='middle'>⚡</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0b1020;
+            --surface: #111834;
+            --surface-2: #0e1530;
+            --border: rgba(148, 163, 184, 0.14);
+            --text: #e6ecff;
+            --muted: #8b98c7;
+            --primary: #6366f1;
+            --primary-2: #818cf8;
+            --accent: #34d399;
+            --accent-2: #22d3ee;
+            --danger: #f87171;
+            --warning: #fbbf24;
+            --mono: 'JetBrains Mono', monospace;
+            --radius: 16px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg); color: var(--text);
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+        a { color: inherit; text-decoration: none; }
+        ::selection { background: rgba(99, 102, 241, 0.4); }
+        .container { max-width: 1120px; margin: 0 auto; padding: 0 1.5rem; }
+
+        /* ── background orbs ── */
+        .orb { position: fixed; border-radius: 50%; filter: blur(90px); opacity: 0.35; pointer-events: none; z-index: 0; }
+        .orb-1 { width: 480px; height: 480px; top: -160px; left: -120px; background: #6366f1; }
+        .orb-2 { width: 420px; height: 420px; top: 8%; right: -140px; background: #7c3aed; }
+        .orb-3 { width: 380px; height: 380px; bottom: -140px; left: 30%; background: #0ea5e9; opacity: 0.22; }
+
+        /* ── nav ── */
+        nav { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(14px);
+            background: rgba(11, 16, 32, 0.7); border-bottom: 1px solid var(--border); }
+        nav .inner { display: flex; align-items: center; justify-content: space-between; height: 68px; }
+        .brand { display: flex; align-items: center; gap: 0.65rem; font-weight: 800; font-size: 1.1rem; letter-spacing: -0.02em; }
+        .brand .bolt { width: 34px; height: 34px; border-radius: 9px;
+            background: linear-gradient(135deg, var(--primary-2), var(--primary));
+            display: grid; place-items: center; font-size: 1rem; box-shadow: 0 6px 18px rgba(99,102,241,0.45); }
+        .nav-links { display: flex; align-items: center; gap: 1.6rem; font-size: 0.9rem; font-weight: 500; color: var(--muted); }
+        .nav-links a:hover { color: var(--text); }
+        .nav-cta { display: flex; align-items: center; gap: 0.8rem; }
+
+        .btn { display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.6rem 1.1rem; border-radius: 10px;
+            font-family: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; border: 1px solid transparent;
+            transition: transform 0.12s, box-shadow 0.2s, background 0.2s; white-space: nowrap; }
+        .btn:hover { transform: translateY(-1px); }
+        .btn-primary { background: linear-gradient(135deg, var(--primary-2), var(--primary)); color: #fff;
+            box-shadow: 0 8px 24px rgba(99,102,241,0.4); }
+        .btn-primary:hover { box-shadow: 0 10px 30px rgba(99,102,241,0.55); }
+        .btn-ghost { color: var(--muted); }
+        .btn-ghost:hover { color: var(--text); background: rgba(148,163,184,0.1); }
+        .btn-accent { background: linear-gradient(135deg, var(--accent), #059669); color: #052e21;
+            box-shadow: 0 8px 24px rgba(52,211,153,0.3); }
+
+        /* ── hero ── */
+        header { position: relative; z-index: 1; padding: 6rem 0 4rem; text-align: center; }
+        .eyebrow { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.9rem; border-radius: 999px;
+            border: 1px solid var(--border); background: rgba(99,102,241,0.1); color: var(--primary-2);
+            font-size: 0.78rem; font-weight: 600; letter-spacing: 0.02em; margin-bottom: 1.6rem; }
+        .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+            box-shadow: 0 0 0 0 rgba(52,211,153,0.6); animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,0.5); } 70% { box-shadow: 0 0 0 8px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+        header h1 { font-size: clamp(2.4rem, 5.5vw, 4.1rem); font-weight: 900; letter-spacing: -0.035em; line-height: 1.06; }
+        header h1 .grad { background: linear-gradient(90deg, var(--primary-2), var(--accent-2) 60%, var(--accent));
+            -webkit-background-clip: text; background-clip: text; color: transparent; }
+        header .sub { max-width: 620px; margin: 1.4rem auto 2.2rem; color: var(--muted); font-size: clamp(1rem, 2vw, 1.15rem); line-height: 1.65; }
+        .hero-cta { display: flex; gap: 0.9rem; justify-content: center; flex-wrap: wrap; }
+        .hero-note { margin-top: 1rem; color: var(--muted); font-size: 0.82rem; }
+        .hero-note code { font-family: var(--mono); color: var(--primary-2); }
+
+        /* ── terminal mock ── */
+        .terminal { position: relative; z-index: 1; max-width: 720px; margin: 3.5rem auto 0;
+            border-radius: 14px; border: 1px solid var(--border); background: #0a0f22;
+            box-shadow: 0 40px 80px -20px rgba(0,0,0,0.7); overflow: hidden;
+            transform: perspective(1200px) rotateX(4deg); }
+        .terminal .bar { display: flex; align-items: center; gap: 0.4rem; padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.02); }
+        .terminal .bar .dot { width: 11px; height: 11px; border-radius: 50%; }
+        .terminal .bar .dot:nth-child(1) { background: #f87171; } .terminal .bar .dot:nth-child(2) { background: #fbbf24; } .terminal .bar .dot:nth-child(3) { background: #34d399; }
+        .terminal .bar .title { margin-left: 0.6rem; font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+        .terminal pre { padding: 1.4rem 1.5rem; font-family: var(--mono); font-size: 0.8rem; line-height: 1.75; text-align: left; overflow-x: auto; }
+        .terminal .c { color: #818cf8; } .terminal .g { color: #34d399; } .terminal .y { color: #fbbf24; } .terminal .m { color: #8b98c7; } .terminal .b { color: #e6ecff; }
+        .cursor { display: inline-block; width: 9px; height: 1.05em; background: var(--accent); vertical-align: text-bottom; animation: blink 1.1s steps(2) infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+
+        /* ── sections ── */
+        section { position: relative; z-index: 1; padding: 5rem 0; }
+        .section-label { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--primary-2); margin-bottom: 0.8rem; }
+        h2.section-title { font-size: clamp(1.7rem, 3.5vw, 2.4rem); font-weight: 800; letter-spacing: -0.025em; margin-bottom: 1rem; }
+        .section-sub { color: var(--muted); max-width: 560px; line-height: 1.6; margin-bottom: 2.5rem; }
+
+        .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.1rem; }
+        .feature { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 1.5rem; transition: transform 0.2s, border-color 0.2s, background 0.2s; }
+        .feature:hover { transform: translateY(-3px); border-color: rgba(99,102,241,0.4); background: var(--surface-2); }
+        .feature .ico { width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center; font-size: 1.2rem; margin-bottom: 1rem;
+            background: rgba(99,102,241,0.14); border: 1px solid rgba(99,102,241,0.25); }
+        .feature h3 { font-size: 1.02rem; font-weight: 700; margin-bottom: 0.4rem; }
+        .feature p { font-size: 0.88rem; color: var(--muted); line-height: 1.6; }
+
+        /* ── stats ── */
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem;
+            border: 1px solid var(--border); border-radius: var(--radius); padding: 2rem 1.5rem;
+            background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(14,165,233,0.05)); }
+        .stat { text-align: center; }
+        .stat .v { font-size: 2rem; font-weight: 900; background: linear-gradient(90deg, var(--primary-2), var(--accent));
+            -webkit-background-clip: text; background-clip: text; color: transparent; }
+        .stat .k { color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }
+
+        /* ── steps ── */
+        .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.1rem; }
+        .step { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.6rem; }
+        .step .n { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, var(--primary-2), var(--primary));
+            display: grid; place-items: center; font-weight: 800; font-size: 0.95rem; margin-bottom: 1rem; }
+        .step h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.4rem; }
+        .step p { font-size: 0.88rem; color: var(--muted); line-height: 1.6; }
+
+        /* ── CTA band ── */
+        .cta-band { text-align: center; background: linear-gradient(135deg, rgba(99,102,241,0.18), rgba(52,211,153,0.1));
+            border: 1px solid var(--border); border-radius: 22px; padding: 3.5rem 2rem; }
+        .cta-band h2 { font-size: clamp(1.6rem, 3.5vw, 2.3rem); font-weight: 800; letter-spacing: -0.025em; margin-bottom: 0.8rem; }
+        .cta-band p { color: var(--muted); margin-bottom: 1.8rem; }
+
+        footer { position: relative; z-index: 1; border-top: 1px solid var(--border); padding: 2.5rem 0; }
+        footer .inner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; color: var(--muted); font-size: 0.85rem; }
+        footer a:hover { color: var(--text); }
+
+        .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.6s ease, transform 0.6s ease; }
+        .reveal.visible { opacity: 1; transform: none; }
+
+        @media (max-width: 768px) {
+            .nav-links { display: none; }
+            header { padding-top: 4rem; }
+            .terminal { transform: none; }
+            section { padding: 3.5rem 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="orb orb-1"></div><div class="orb orb-2"></div><div class="orb orb-3"></div>
+
+    <nav>
+        <div class="container inner">
+            <div class="brand"><span class="bolt">⚡</span> Mini Heroku</div>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#how">How it works</a>
+                <a href="#addons">Add-ons</a>
+            </div>
+            <div class="nav-cta">
+                <a href="/ui/login" class="btn btn-ghost">Sign in</a>
+                <a href="/ui/register" class="btn btn-primary">Get started</a>
+            </div>
+        </div>
+    </nav>
+
+    <header>
+        <div class="container">
+            <span class="eyebrow"><span class="dot"></span> Your own PaaS — built for the PFA demo</span>
+            <h1>Deploy apps in<br><span class="grad">one click.</span></h1>
+            <p class="sub">
+                Mini Heroku is a self-hosted Platform-as-a-Service. Push a Git repo, and your app goes
+                live with HTTPS, scaling, logs and Postgres/Redis add-ons — in under two minutes.
+            </p>
+            <div class="hero-cta">
+                <a href="/ui/register" class="btn btn-primary" style="padding:0.75rem 1.5rem; font-size:1rem;">⚡ Start deploying — free</a>
+                <a href="/ui/login" class="btn btn-ghost" style="padding:0.75rem 1.5rem; font-size:1rem;">Sign in</a>
+            </div>
+            <p class="hero-note">No credit card. Demo account: <code>demo@test.local</code></p>
+        </div>
+
+        <div class="container">
+            <div class="terminal">
+                <div class="bar">
+                    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                    <span class="title">mini-heroku — deploy</span>
+                </div>
+                <pre><span class="c">$</span> mini-heroku deploy myapp --repo https://github.com/me/app.git
+<span class="y">----&gt;</span> Cloning repository… <span class="g">done</span>
+<span class="y">----&gt;</span> Building Docker image… <span class="g">done</span>
+<span class="y">----&gt;</span> Pushing to local registry… <span class="g">done</span>
+<span class="y">----&gt;</span> Starting container on :52507 <span class="g">up</span>
+<span class="y">----&gt;</span> Attaching Postgres add-on → <span class="b">DATABASE_URL</span> injected
+<span class="y">----&gt;</span> Caddy HTTPS <span class="g">✅ https://myapp.68.221.16.224.sslip.io</span>
+
+<span class="m">🚀 v2 deployed — blue/green, 0s downtime</span><span class="cursor"></span></pre>
+            </div>
+        </div>
+    </header>
+
+    <section id="features">
+        <div class="container">
+            <p class="section-label">Why Mini Heroku</p>
+            <h2 class="section-title">Everything a developer needs to ship</h2>
+            <p class="section-sub">A complete deployment platform running on a single VM, built from scratch: build pipeline, container orchestration, reverse proxy, add-ons and monitoring.</p>
+            <div class="features">
+                <div class="feature reveal"><div class="ico">🚀</div><h3>Deploy from Git</h3><p>Clone, build and start any repository with a Dockerfile. Zero-downtime blue/green redeploys built-in.</p></div>
+                <div class="feature reveal"><div class="ico">🔒</div><h3>HTTPS by default</h3><p>Caddy + Let's Encrypt issue certificates automatically. Custom domains supported.</p></div>
+                <div class="feature reveal"><div class="ico">🗄</div><h3>Postgres &amp; Redis add-ons</h3><p>Provision real databases on an isolated network and attach them — <code style="font-family:var(--mono);">DATABASE_URL</code> is injected for you.</p></div>
+                <div class="feature reveal"><div class="ico">📈</div><h3>Live metrics &amp; logs</h3><p>CPU, memory and real-time logs streamed straight to your browser, with release history and rollback.</p></div>
+                <div class="feature reveal"><div class="ico">🔁</div><h3>Scale with zero code</h3><p>Spin up replicas for load balancing with a click — Caddy routes traffic across all of them.</p></div>
+                <div class="feature reveal"><div class="ico">🛡</div><h3>Secure by design</h3><p>Hashed API tokens with rotation, CSRF protection, rate-limiting and encrypted environment variables.</p></div>
+            </div>
+        </div>
+    </section>
+
+    <section id="stats" class="container">
+        <div class="stats">
+            <div class="stat"><div class="v">1 VM</div><div class="k">Full platform</div></div>
+            <div class="stat"><div class="v">~2 min</div><div class="k">Deploy to live</div></div>
+            <div class="stat"><div class="v">0s</div><div class="k">Blue/green downtime</div></div>
+            <div class="stat"><div class="v">100%</div><div class="k">Open source</div></div>
+        </div>
+    </section>
+
+    <section id="how">
+        <div class="container">
+            <p class="section-label">How it works</p>
+            <h2 class="section-title">From repository to production</h2>
+            <div class="steps">
+                <div class="step reveal"><span class="n">1</span><h3>Connect</h3><p>Create an account and point Mini Heroku at any public Git repository containing a Dockerfile.</p></div>
+                <div class="step reveal"><span class="n">2</span><h3>Deploy</h3><p>We build the image in an isolated container with CPU/RAM limits, then start it behind the reverse proxy.</p></div>
+                <div class="step reveal"><span class="n">3</span><h3>Attach add-ons</h3><p>Provision Postgres or Redis and attach them. Connection strings appear as environment variables.</p></div>
+                <div class="step reveal"><span class="n">4</span><h3>Monitor</h3><p>Watch live metrics, stream logs, scale replicas and roll back releases — all from the dashboard.</p></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="container" id="addons">
+        <div class="cta-band reveal">
+            <h2>Ready to ship your first app?</h2>
+            <p>Create a free account and deploy in minutes.</p>
+            <a href="/ui/register" class="btn btn-accent" style="padding:0.85rem 1.8rem; font-size:1rem;">Get started — it's free</a>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container inner">
+            <div class="brand" style="font-size:0.95rem;"><span class="bolt" style="width:28px;height:28px;font-size:0.85rem;">⚡</span> Mini Heroku</div>
+            <div>Built for the PFA — ENSA Khouribga · <a href="/ui/login">Sign in</a> · <a href="/docs">API Docs</a></div>
+        </div>
+    </footer>
+
+    <script>
+        const io = new IntersectionObserver((entries) => {
+            entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); } });
+        }, { threshold: 0.15 });
+        document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+    </script>
+</body>
+</html>
