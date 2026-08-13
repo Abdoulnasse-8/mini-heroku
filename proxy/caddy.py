@@ -19,7 +19,7 @@ def update_caddyfile(apps: list[dict]):
       S'il est présent et non vide, il remplace "port".
     - Caddy exige une virgule entre plusieurs hostnames d'un même site.
     """
-    blocks = []
+    blocks = [f"{BASE_DOMAIN} {{\n    reverse_proxy localhost:8000\n}}\n"]
     for app in apps:
         hostnames = [f"{app['name']}.{BASE_DOMAIN}"]
         hostnames += app.get("domains", [])
