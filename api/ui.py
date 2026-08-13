@@ -12,7 +12,7 @@ sys.path.insert(0, BASE_DIR)
 
 from db.models import get_db, App, Release, EnvVar, User, Addon, AppAddon
 from api.main import (fernet, docker_client, get_env_vars, get_app_domains,
-                      _rate_limit, login_limiter, register_limiter)
+                      _rate_limit, login_limiter, register_limiter, client_ip)
 from api.security import (
     get_current_user, verify_password, hash_password, create_token,
     hash_token, token_ttl, create_csrf_token, get_app_or_404,
@@ -63,12 +63,18 @@ async def _get_form(request: Request):
 
 @router.post("/login")
 async def ui_login(request: Request, db: Session = Depends(get_db)):
-    _rate_limit(login_limiter, request)
     form = await _get_form(request)
     email = (form.get("email") or "").strip().lower()
     password = form.get("password") or ""
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(password, user.password):
+        ok, retry = login_limiter.allow(client_ip(request))
+        if not ok:
+            resp = _csrf_page(
+                request, "login.html",
+                error=f"Too many attempts — please try again in {retry} seconds")
+            resp.status_code = 429
+            return resp
         return _csrf_page(request, "login.html",
                           error="Invalid email or password")
     resp = RedirectResponse(url="/ui/", status_code=303)

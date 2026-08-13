@@ -171,10 +171,12 @@ def register(req: RegisterRequest, request: Request,
 
 @app.post("/auth/login")
 def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    _rate_limit(login_limiter, request)
     email = (req.email or "").strip().lower()
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(req.password, user.password):
+        # On ne rate-limit que les ÉCHECS : un utilisateur légitime qui se
+        # trompe de mot de passe ne se bloque pas.
+        _rate_limit(login_limiter, request)
         raise HTTPException(401, "Invalid email or password")
     # Rotation du token à chaque connexion (le précédent est invalidé)
     raw_token = create_token()

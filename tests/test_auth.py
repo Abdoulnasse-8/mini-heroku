@@ -237,6 +237,11 @@ def test_login_rate_limited(client):
                         json={"email": "alice@example.com", "password": "wrong"})
         assert r.status_code == 429
         assert "retry-after" in {k.lower() for k in r.headers}
+        # un login RÉUSSI reste permis même bloqué sur les échecs
+        r = client.post("/auth/login",
+                        json={"email": "alice@example.com",
+                              "password": "supersecret"})
+        assert r.status_code == 200
     finally:
         login_limiter.max_attempts = 1000
         login_limiter.clear()
