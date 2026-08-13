@@ -8,7 +8,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green?logo=fastapi)
 ![Docker](https://img.shields.io/badge/Docker-24+-blue?logo=docker)
 ![Caddy](https://img.shields.io/badge/Caddy-2.11-orange)
-![Tests](https://img.shields.io/badge/tests-27%2F27%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-29%2F29%20passing-brightgreen)
 ![HTTPS](https://img.shields.io/badge/HTTPS-Let's%20Encrypt-blue)
 
 **Built as a PFA project at ENSA Khouribga — Option SCIL**
@@ -74,6 +74,7 @@ git push ───────────────────────�
 |---|---|
 | Git push deploy via SSH | ✅ |
 | Auto Docker build from Dockerfile | ✅ |
+| Deploy from a subdirectory Dockerfile (ex: `JEEproject/Dockerfile`) | ✅ |
 | Local Docker registry | ✅ |
 | Automatic HTTPS (Let's Encrypt) | ✅ |
 | Custom subdomain per app | ✅ |
@@ -195,7 +196,7 @@ Full interactive docs: `http://YOUR-IP:8000/docs`
 | `GET` | `/auth/me` | Current user |
 | `POST` | `/auth/rotate-token` | Issue a new token (revokes the old one) |
 | `POST` | `/auth/revoke-token` | Revoke the current token |
-| `POST` | `/apps/deploy` | Deploy an app from git repo |
+| `POST` | `/apps/deploy` | Deploy an app from git repo (optional `dockerfile` = repo-relative path, e.g. `JEEproject/Dockerfile`) |
 | `GET` | `/apps` | List your apps |
 | `GET` | `/apps/{name}` | Get app details |
 | `PUT` | `/apps/{name}/config` | Set env var |
@@ -274,6 +275,28 @@ myplatform addons:destroy my-db
 
 Add-ons run on an internal Docker network (`mh_addons`) — they are never exposed to the internet.
 
+### Real-world example (Spring Boot + PostgreSQL)
+
+A multi-container stack is deployed as two apps from the same repo (`CabinetMedical`):
+
+1. Backend app deployed with a subdirectory Dockerfile:
+   ```bash
+   myplatform deploy cabinet-api --repo https://github.com/Abdoulnasse-8/CabinetMedical.git --dockerfile JEEproject/Dockerfile
+   myplatform addons:create cabinet-db postgres
+   myplatform addons:attach cabinet-api cabinet-db
+   ```
+   Attaching injects `DATABASE_URL` (`postgresql://user:pass@addon-cabinet-db:5432/cabinet-db`).
+   The Spring Boot app reads it directly (see `CabinetMedicalApplication.configureDatasourceFromAddon`) — no hardcoded credentials.
+2. Frontend app from the same repo (root `Dockerfile`), configured to call the backend over HTTPS.
+
+> Apps that need an add-on to start (e.g. a JVM backend) are recorded even if the first
+> health check fails, so you can attach the add-on / set config and redeploy — no dead-end.
+
+### Health check
+
+By default an app must answer < 500 on its exposed port within `MINIHEROKU_HEALTH_TIMEOUT`
+seconds (default **90** — generous for slow JVM/Spring Boot startups). Adjust per VM:
+
 ---
 
 ## Ops Runbook
@@ -304,7 +327,7 @@ Cron conseillé :
 ```bash
 cd ~/mini-heroku && source venv/bin/activate
 python3 -m pytest tests/test_auth.py tests/test_ops.py -v   # unitaires (sans Docker)
-# Expected: 27 passed
+# Expected: 29 passed
 python3 -m pytest tests/test_e2e.py -v                       # E2E (sur la VM)
 ```
 
@@ -374,6 +397,8 @@ mini-heroku/
 ## Demo
 
 - **hello-world**: https://hello-world.68.221.16.224.sslip.io
+- **Cabinet médical (frontend)**: https://cabinetmedical.68.221.16.224.sslip.io — login `admin` / `password`
+- **Cabinet médical (backend API)**: https://cabinet-api.68.221.16.224.sslip.io (add-on Postgres `cabinet-db`)
 - **API docs**: http://68.221.16.224:8000/docs
 - **Web UI**: http://68.221.16.224:8000/ui/
 
