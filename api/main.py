@@ -1,16 +1,28 @@
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.responses import StreamingResponse
+import hmac
+import json as _json
+import logging
+import secrets
+import socket
+import sys
+import os
+from datetime import datetime, timedelta
+
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-import sys, socket, os, docker as docker_sdk
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import docker as docker_sdk
+
+import config
+BASE_DIR = config.BASE_DIR
 sys.path.insert(0, BASE_DIR)
 
 from db.models import (init_db, get_db, SessionLocal, App, Release, EnvVar,
-                       CustomDomain, User)
+                       CustomDomain, User, Addon, AppAddon, AuditLog)
 from builder.build import build_and_push
-from runner.run import run_container, stop_container, get_container_status, wait_healthy
-from proxy.caddy import update_caddyfile, update_caddyfile_replicas
+from runner.run import (run_container, stop_container, get_container_status,
+                        wait_healthy, get_free_port, _ensure_addon_network)
+from proxy.caddy import update_caddyfile
 from cryptography.fernet import Fernet
 from api.security import (
     get_current_user,
@@ -18,26 +30,71 @@ from api.security import (
     hash_password,
     verify_password,
     create_token,
+    hash_token,
+    token_ttl,
+    create_csrf_token,
+    same_origin,
     validate_app_name,
     validate_repo_url,
 )
+from api.ratelimit import RateLimiter, client_ip
 
-app = FastAPI(title="Mini Heroku API")
+logger = logging.getLogger("mini-heroku")
+logging.basicConfig(level=logging.INFO)
+
+# Docs/Swagger désactivés en production
+if config.IS_PRODUCTION:
+    app = FastAPI(title="Mini Heroku API", docs_url=None, redoc_url=None,
+                  openapi_url=None)
+else:
+    app = FastAPI(title="Mini Heroku API")
+
 docker_client = docker_sdk.from_env()
+
+# ── RATE LIMITING (auth) ─────────────────────────────────
+login_limiter = RateLimiter(config.LOGIN_RATE_MAX, config.LOGIN_RATE_WINDOW)
+register_limiter = RateLimiter(config.REGISTER_RATE_MAX, config.REGISTER_RATE_WINDOW)
+
+def _rate_limit(limiter: RateLimiter, request: Request):
+    ok, retry = limiter.allow(client_ip(request))
+    if not ok:
+        exc = HTTPException(429, "Too many attempts — please try again later")
+        exc.headers = {"Retry-After": str(retry)}
+        raise exc
+
+# ── CSRF (UI) ────────────────────────────────────────────
+@app.middleware("http")
+async def csrf_middleware(request: Request, call_next):
+    method = request.method
+    path = request.url.path
+    if method in ("POST", "PUT", "DELETE", "PATCH") and path.startswith("/ui"):
+        if path in ("/ui/login", "/ui/register"):
+            form_token = (await request.form()).get("csrf_token")
+            cookie_token = request.cookies.get("mh_csrf")
+            if not form_token or not cookie_token or \
+                    not hmac.compare_digest(form_token, cookie_token):
+                return JSONResponse(status_code=403,
+                                    content={"detail": "CSRF validation failed"})
+        else:
+            header_token = request.headers.get("x-csrf-token")
+            cookie_token = request.cookies.get("mh_csrf")
+            if not header_token or not cookie_token or \
+                    not hmac.compare_digest(header_token, cookie_token):
+                return JSONResponse(status_code=403,
+                                    content={"detail": "CSRF validation failed"})
+    return await call_next(request)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
-    from fastapi.responses import RedirectResponse, JSONResponse
+    from fastapi.responses import RedirectResponse
     accept = request.headers.get("accept", "")
     if exc.status_code in (401, 403) and "text/html" in accept:
         return RedirectResponse(url="/ui/login")
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail},
+                        headers=getattr(exc, "headers", None))
 
 # Clé Fernet persistante — stockée HORS du repo (répertoire utilisateur)
-FERNET_KEY_FILE = os.environ.get(
-    "MINIHEROKU_FERNET_KEY_FILE",
-    os.path.join(os.path.expanduser("~"), ".mini-heroku", "fernet.key"),
-)
+FERNET_KEY_FILE = config.FERNET_KEY_FILE
 try:
     with open(FERNET_KEY_FILE, "rb") as f:
         FERNET_KEY = f.read()
@@ -74,9 +131,18 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class DomainRequest(BaseModel):
+    domain: str
+
+class AddonRequest(BaseModel):
+    name: str
+    kind: str
+
 # ── AUTH ────────────────────────────────────────────────
 @app.post("/auth/register")
-def register(req: RegisterRequest, db: Session = Depends(get_db)):
+def register(req: RegisterRequest, request: Request,
+             db: Session = Depends(get_db)):
+    _rate_limit(register_limiter, request)
     email = (req.email or "").strip().lower()
     if not email or "@" not in email:
         raise HTTPException(400, "Invalid email")
@@ -84,10 +150,13 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(400, "Password must be at least 8 characters")
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(409, "Email already registered")
+    raw_token = create_token()
+    ttl = token_ttl()
     user = User(
         email=email,
         password=hash_password(req.password),
-        token=create_token(),
+        token=hash_token(raw_token),
+        token_expires_at=datetime.utcnow() + ttl if ttl else None,
     )
     db.add(user)
     db.commit()
@@ -97,35 +166,64 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
         a.owner_email = email
     db.commit()
     audit("register", "platform", {"email": email})
-    return {"status": "ok", "email": email, "token": user.token}
+    return {"status": "ok", "email": email, "token": raw_token}
 
 @app.post("/auth/login")
-def login(req: LoginRequest, db: Session = Depends(get_db)):
+def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    _rate_limit(login_limiter, request)
     email = (req.email or "").strip().lower()
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(req.password, user.password):
         raise HTTPException(401, "Invalid email or password")
+    # Rotation du token à chaque connexion (le précédent est invalidé)
+    raw_token = create_token()
+    user.token = hash_token(raw_token)
+    ttl = token_ttl()
+    user.token_expires_at = datetime.utcnow() + ttl if ttl else None
+    db.commit()
     audit("login", "platform", {"email": email})
-    return {"status": "ok", "email": user.email, "token": user.token}
+    return {"status": "ok", "email": user.email, "token": raw_token}
 
 @app.get("/auth/me")
 def me(user: User = Depends(get_current_user)):
     return {"email": user.email, "created_at": str(user.created_at)}
 
-# ── HELPERS ─────────────────────────────────────────────
-def get_free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
+@app.post("/auth/rotate-token")
+def rotate_token(db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    """Émet un nouveau token (le précédent est invalidé)."""
+    raw_token = create_token()
+    user.token = hash_token(raw_token)
+    ttl = token_ttl()
+    user.token_expires_at = datetime.utcnow() + ttl if ttl else None
+    db.commit()
+    audit("token:rotate", "platform", {"email": user.email})
+    return {"status": "ok", "token": raw_token,
+            "expires_at": str(user.token_expires_at) if user.token_expires_at else None}
 
+@app.post("/auth/revoke-token")
+def revoke_token(db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    """Révoque le token courant (il devient immédiatement invalide)."""
+    user.token = hash_token(create_token())
+    user.token_expires_at = None
+    db.commit()
+    audit("token:revoke", "platform", {"email": user.email})
+    return {"status": "revoked"}
+
+# ── HELPERS ─────────────────────────────────────────────
 def get_env_vars(app_name: str, db: Session) -> dict:
     rows = db.query(EnvVar).filter(EnvVar.app_name == app_name).all()
     result = {}
     for row in rows:
         try:
             result[row.key] = fernet.decrypt(row.value.encode()).decode()
-        except:
-            result[row.key] = row.value
+        except Exception as e:
+            logger.error("Failed to decrypt env var '%s' for app '%s': %s",
+                         row.key, app_name, e)
+            raise HTTPException(
+                500, f"Failed to decrypt env var '{row.key}' for app '{app_name}' "
+                     f"— the Fernet key may have changed")
     return result
 
 def get_app_domains(app_name: str, db: Session) -> list[str]:
@@ -134,11 +232,180 @@ def get_app_domains(app_name: str, db: Session) -> list[str]:
 
 def _caddy_apps(db: Session) -> list[dict]:
     apps = db.query(App).filter(App.status == "running").all()
-    return [{"name": a.name, "port": a.port,
-             "domains": get_app_domains(a.name, db)} for a in apps]
+    result = []
+    for a in apps:
+        replica_ports = None
+        if a.replica_ports:
+            try:
+                replica_ports = _json.loads(a.replica_ports)
+            except Exception:
+                replica_ports = None
+        entry = {"name": a.name, "port": a.port,
+                 "domains": get_app_domains(a.name, db)}
+        if replica_ports:
+            entry["ports"] = replica_ports
+        result.append(entry)
+    return result
 
 def _refresh_caddy(db: Session):
     update_caddyfile(_caddy_apps(db))
+
+# ── ADD-ONS (Postgres / Redis) ──────────────────────────
+ADDON_IMAGES = {"postgres": "postgres:16-alpine", "redis": "redis:7-alpine"}
+ADDON_INTERNAL_PORT = {"postgres": 5432, "redis": 6379}
+ADDON_ENV_KEY = {"postgres": "DATABASE_URL", "redis": "REDIS_URL"}
+
+def _addon_url(addon: Addon, password: str) -> str:
+    if addon.kind == "postgres":
+        return f"postgresql://postgres:{password}@addon-{addon.name}:5432/{addon.name}"
+    return f"redis://default:{password}@addon-{addon.name}:6379/0"
+
+def _get_addon_or_404(name: str, db: Session, user: User) -> Addon:
+    addon = db.query(Addon).filter(Addon.name == name).first()
+    if not addon:
+        raise HTTPException(404, "Add-on not found")
+    if addon.owner_email != user.email:
+        raise HTTPException(403, "You do not own this add-on")
+    return addon
+
+@app.post("/addons")
+def create_addon(req: AddonRequest, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    name = validate_app_name(req.name)
+    kind = (req.kind or "").strip().lower()
+    if kind not in ADDON_IMAGES:
+        raise HTTPException(400, "kind must be 'postgres' or 'redis'")
+    if db.query(Addon).filter(Addon.name == name).first():
+        raise HTTPException(409, "Add-on already exists")
+    password = secrets.token_urlsafe(24)
+    env = {"POSTGRES_USER": "postgres", "POSTGRES_PASSWORD": password,
+           "POSTGRES_DB": name} if kind == "postgres" else {}
+    command = (["redis-server", "--requirepass", password, "--save", "",
+                "--appendonly", "no"] if kind == "redis" else None)
+    try:
+        _ensure_addon_network()
+        docker_client.containers.run(
+            ADDON_IMAGES[kind],
+            name=f"addon-{name}",
+            detach=True,
+            network=config.ADDON_NETWORK,
+            environment=env,
+            command=command,
+            mem_limit="256m",
+            nano_cpus=250_000_000,
+            restart_policy={"Name": "unless-stopped"},
+        )
+    except docker_sdk.errors.APIError as e:
+        audit("addon:create", name, {"kind": kind, "error": str(e)}, "error")
+        raise HTTPException(502, f"Failed to start {kind} add-on: {e}")
+    addon = Addon(name=name, owner_email=user.email, kind=kind,
+                  password=fernet.encrypt(password.encode()).decode(),
+                  status="running")
+    db.add(addon)
+    db.commit()
+    audit("addon:create", name, {"kind": kind})
+    return {"status": "created", "name": name, "kind": kind,
+            "url": _addon_url(addon, password)}
+
+@app.get("/addons")
+def list_addons(db: Session = Depends(get_db),
+                user: User = Depends(get_current_user)):
+    addons = db.query(Addon).filter(Addon.owner_email == user.email).all()
+    return [{"name": a.name, "kind": a.kind, "status": a.status,
+             "created_at": str(a.created_at)} for a in addons]
+
+@app.delete("/addons/{name}")
+def destroy_addon(name: str, db: Session = Depends(get_db),
+                  user: User = Depends(get_current_user)):
+    addon = _get_addon_or_404(name, db, user)
+    try:
+        c = docker_client.containers.get(f"addon-{name}")
+        c.stop()
+        c.remove()
+    except docker_sdk.errors.NotFound:
+        pass
+    # Détacher proprement des apps qui l'utilisent (supprime la var d'env)
+    assocs = db.query(AppAddon).filter(AppAddon.addon_name == name).all()
+    for a in assocs:
+        key = ADDON_ENV_KEY[addon.kind]
+        row = db.query(EnvVar).filter(
+            EnvVar.app_name == a.app_name, EnvVar.key == key).first()
+        if row:
+            db.delete(row)
+        db.delete(a)
+    db.delete(addon)
+    db.commit()
+    audit("addon:destroy", name, {"kind": addon.kind})
+    return {"status": "destroyed", "name": name}
+
+@app.post("/apps/{name}/addons/{addon_name}")
+def attach_addon(name: str, addon_name: str, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    a = get_app_or_404(name, db, user)
+    addon = _get_addon_or_404(addon_name, db, user)
+    password = fernet.decrypt(addon.password.encode()).decode()
+    url = _addon_url(addon, password)
+    key = ADDON_ENV_KEY[addon.kind]
+    existing = db.query(EnvVar).filter(
+        EnvVar.app_name == name, EnvVar.key == key).first()
+    if existing:
+        existing.value = fernet.encrypt(url.encode()).decode()
+    else:
+        db.add(EnvVar(app_name=name, key=key,
+                      value=fernet.encrypt(url.encode()).decode()))
+    if not db.query(AppAddon).filter(
+            AppAddon.app_name == name,
+            AppAddon.addon_name == addon_name).first():
+        db.add(AppAddon(app_name=name, addon_name=addon_name))
+    db.commit()
+    env_vars = get_env_vars(name, db)
+    port = run_container(name, a.image, env_vars, a.port)
+    if not wait_healthy(port):
+        stop_container(name)
+        audit("addon:attach", name, {"addon": addon_name,
+                                     "error": "health check failed"}, "error")
+        raise HTTPException(502, "App did not become healthy after attaching add-on")
+    a.port = port
+    a.status = "running"
+    db.commit()
+    _refresh_caddy(db)
+    audit("addon:attach", name, {"addon": addon_name, "key": key})
+    return {"status": "attached", "app": name, "addon": addon_name, "key": key}
+
+@app.delete("/apps/{name}/addons/{addon_name}")
+def detach_addon(name: str, addon_name: str, db: Session = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    a = get_app_or_404(name, db, user)
+    addon = _get_addon_or_404(addon_name, db, user)
+    key = ADDON_ENV_KEY[addon.kind]
+    row = db.query(EnvVar).filter(
+        EnvVar.app_name == name, EnvVar.key == key).first()
+    if row:
+        db.delete(row)
+    assoc = db.query(AppAddon).filter(
+        AppAddon.app_name == name, AppAddon.addon_name == addon_name).first()
+    if assoc:
+        db.delete(assoc)
+    db.commit()
+    env_vars = get_env_vars(name, db)
+    port = run_container(name, a.image, env_vars, a.port)
+    a.port = port
+    a.status = "running"
+    db.commit()
+    _refresh_caddy(db)
+    audit("addon:detach", name, {"addon": addon_name, "key": key})
+    return {"status": "detached", "app": name, "addon": addon_name}
+
+@app.get("/apps/{name}/addons")
+def list_app_addons(name: str, db: Session = Depends(get_db),
+                    user: User = Depends(get_current_user)):
+    get_app_or_404(name, db, user)
+    assoc = db.query(AppAddon).filter(AppAddon.app_name == name).all()
+    names = [x.addon_name for x in assoc]
+    if not names:
+        return []
+    addons = db.query(Addon).filter(Addon.name.in_(names)).all()
+    return [{"name": a.name, "kind": a.kind} for a in addons]
 
 # ── DEPLOY ──────────────────────────────────────────────
 @app.post("/apps/deploy")
@@ -301,11 +568,13 @@ def scale(name: str, req: ScaleRequest, db: Session = Depends(get_db),
             old.stop(); old.remove()
         except:
             pass
+        _ensure_addon_network()
         docker_client.containers.run(
             a.image,
             name=container_name,
             detach=True,
-            ports={"8000/tcp": port},
+            network=config.ADDON_NETWORK,
+            ports={f"{config.CONTAINER_PORT}/tcp": (config.APP_BIND_HOST, port)},
             environment=env_vars,
             mem_limit="256m",
             nano_cpus=250_000_000,
@@ -313,8 +582,9 @@ def scale(name: str, req: ScaleRequest, db: Session = Depends(get_db),
         )
         ports.append(port)
     a.replicas = req.replicas
+    a.replica_ports = _json.dumps(ports) if ports else None
     db.commit()
-    update_caddyfile_replicas(name, ports, get_app_domains(name, db))
+    _refresh_caddy(db)
     audit("scale", name, {"replicas": req.replicas, "ports": ports})
     return {"status": "scaled", "app": name, "replicas": req.replicas, "ports": ports}
 
@@ -386,9 +656,6 @@ def ps(name: str, db: Session = Depends(get_db),
              "ports": c.ports} for c in containers]
 
 # ── CUSTOM DOMAINS ───────────────────────────────────────
-class DomainRequest(BaseModel):
-    domain: str
-
 @app.post("/apps/{name}/domains")
 def add_domain(name: str, req: DomainRequest, db: Session = Depends(get_db),
                user: User = Depends(get_current_user)):
@@ -436,9 +703,6 @@ def root():
     return RedirectResponse(url="/ui/")
 
 # ── AUDIT LOG ────────────────────────────────────────────
-import json as _json
-from db.models import AuditLog
-
 def audit(action: str, app_name: str, details: dict, status: str = "success"):
     db = SessionLocal()
     try:
@@ -512,11 +776,13 @@ def deploy_zero_downtime(name: str, db: Session = Depends(get_db),
     except:
         pass
 
+    _ensure_addon_network()
     docker_client.containers.run(
         new_image,
         name=green_name,
         detach=True,
-        ports={"8000/tcp": green_port},
+        network=config.ADDON_NETWORK,
+        ports={f"{config.CONTAINER_PORT}/tcp": (config.APP_BIND_HOST, green_port)},
         environment=env_vars,
         mem_limit="512m",
         nano_cpus=500_000_000,

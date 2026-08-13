@@ -2,12 +2,14 @@ import hashlib
 import hmac
 import re
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from db.models import App, User, get_db
+import config
 
 APP_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 PBKDF2_ITERATIONS = 200_000
@@ -31,7 +33,30 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 def create_token() -> str:
+    """Token API en clair — seul le hash (hash_token) est stocké en base."""
     return secrets.token_urlsafe(32)
+
+def hash_token(token: str) -> str:
+    return f"sha256${hashlib.sha256(token.encode()).hexdigest()}"
+
+def token_ttl() -> timedelta | None:
+    days = config.TOKEN_TTL_DAYS
+    return timedelta(days=days) if days and days > 0 else None
+
+def create_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
+
+def same_origin(request: Request) -> bool:
+    """Vérifie que la requête vient du même hôte (anti login-CSRF)."""
+    from urllib.parse import urlparse
+    host = request.headers.get("host")
+    origin = request.headers.get("origin")
+    if origin:
+        return urlparse(origin).netloc == host
+    referer = request.headers.get("referer")
+    if referer:
+        return urlparse(referer).netloc == host
+    return False
 
 def validate_app_name(name: str) -> str:
     name = (name or "").strip().lower()
@@ -68,9 +93,15 @@ def get_current_user(
         token = request.cookies.get("mh_token")
     if not token:
         raise HTTPException(401, "Authentication required")
-    user = db.query(User).filter(User.token == token).first()
+    user = db.query(User).filter(User.token == hash_token(token)).first()
     if not user:
         raise HTTPException(401, "Invalid or expired token")
+    if user.token_expires_at is not None:
+        expires = user.token_expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > expires:
+            raise HTTPException(401, "Token expired — please log in again")
     return user
 
 def get_app_or_404(name: str, db: Session, user: User) -> App:

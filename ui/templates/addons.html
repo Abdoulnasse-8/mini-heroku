@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Add-ons — Mini Heroku{% endblock %}
+{% block header %}Add-ons{% endblock %}
+{% block crumb %}Postgres / Redis{% endblock %}
+{% block content %}
+<div class="page-head">
+    <h2>Your add-ons</h2>
+    <a href="/ui/deploy" class="btn btn-secondary btn-lg">← Deploy App</a>
+</div>
+
+<div class="grid-2">
+    <div class="card">
+        <h2>Provision a database</h2>
+        <div class="field">
+            <label for="addon-name">Add-on name</label>
+            <input type="text" id="addon-name" placeholder="e.g. my-postgres" required pattern="[a-z0-9][a-z0-9-]*" autocomplete="off">
+        </div>
+        <div class="field">
+            <label for="addon-kind">Type</label>
+            <select id="addon-kind">
+                <option value="postgres">PostgreSQL 16</option>
+                <option value="redis">Redis 7</option>
+            </select>
+        </div>
+        <button class="btn btn-primary btn-lg btn-block" onclick="createAddon()" id="create-btn">
+            Create add-on
+        </button>
+        <p class="hint" id="create-result"></p>
+    </div>
+
+    <div class="card">
+        <h2>Available add-ons</h2>
+        {% if addons %}
+        <table class="table">
+            <thead><tr><th>Name</th><th>Type</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            {% for a in addons %}
+                <tr>
+                    <td class="mono">{{ a.name }}</td>
+                    <td>{{ a.kind }}</td>
+                    <td><span class="badge badge-{{ a.status }}">{{ a.status }}</span></td>
+                    <td style="text-align:right;">
+                        <button class="btn btn-danger btn-sm" onclick="destroyAddon('{{ a.name }}')">Destroy</button>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="4" class="muted">No add-ons yet. Create your first Postgres or Redis database.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        <p class="hint" style="margin-top:0.8rem;">
+            Add-ons live on the internal Docker network — attach them to an app from the
+            app's <strong>Add-ons</strong> tab to inject <code style="font-family:var(--mono);">DATABASE_URL</code> / <code style="font-family:var(--mono);">REDIS_URL</code>.
+        </p>
+    </div>
+</div>
+
+<script>
+function createAddon() {
+    const name = document.getElementById('addon-name').value.trim();
+    const kind = document.getElementById('addon-kind').value;
+    const btn = document.getElementById('create-btn');
+    if (!name) { toast('Name required', 'error'); return; }
+    btn.disabled = true;
+    api('POST', '/ui/addons', {name: name, kind: kind})
+        .then(d => {
+            document.getElementById('create-result').textContent = 'Created — connection URL: ' + d.url;
+            document.getElementById('create-result').style.color = '#065f46';
+            toast('Add-on created', 'success');
+            setTimeout(() => location.reload(), 1200);
+        })
+        .catch(e => { btn.disabled = false; document.getElementById('create-result').textContent = e.message; document.getElementById('create-result').style.color = '#991b1b'; });
+}
+function destroyAddon(name) {
+    if (!confirm('Destroy add-on "' + name + '" permanently? This detaches it from apps.')) return;
+    api('DELETE', '/ui/addons/' + encodeURIComponent(name))
+        .then(() => location.reload())
+        .catch(e => toast(e.message, 'error'));
+}
+</script>
+{% endblock %}

@@ -30,7 +30,7 @@
             <li>We <strong style="color:var(--text)">clone</strong> your repository on the VM.</li>
             <li>We <strong style="color:var(--text)">build</strong> the Docker image and push it to the local registry.</li>
             <li>Your app is <strong style="color:var(--text)">started</strong> in an isolated container with CPU/RAM limits and auto-restart.</li>
-            <li>Caddy routes <strong style="color:var(--text)">&lt;name&gt;.68.221.16.224.sslip.io</strong> to your container.</li>
+            <li>Caddy routes <strong style="color:var(--text)">&lt;name&gt;.{{ base_domain }}</strong> to your container.</li>
             <li><strong style="color:var(--text)">Let's Encrypt</strong> issues an HTTPS certificate automatically.</li>
         </ol>
         <div class="card" style="background:var(--primary-soft); border-color:#c7d2fe; padding:0.9rem 1rem;">
@@ -60,7 +60,7 @@ form.addEventListener('submit', function (e) {
         .then(d => {
             result.innerHTML = '<div class="card" style="background:var(--success-soft); border-color:#a7f3d0; padding:1rem;">' +
                 '<p style="color:#065f46; font-weight:700;">✅ Deployed ' + d.app + ' (v' + d.version + ')</p>' +
-                '<p class="mt-1"><a href="https://' + d.app + '.68.221.16.224.sslip.io" target="_blank">https://' + d.app + '.68.221.16.224.sslip.io ↗</a></p>' +
+                '<p class="mt-1"><a href="https://' + d.app + '.{{ base_domain }}" target="_blank">https://' + d.app + '.{{ base_domain }} ↗</a></p>' +
                 '<a href="/ui/apps/' + d.app + '" class="btn btn-primary mt-1">Open app dashboard</a></div>';
             btn.disabled = false;
             btn.textContent = 'Deploy Application';

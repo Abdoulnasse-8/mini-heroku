@@ -9,7 +9,7 @@
         <span class="badge badge-{{ app.status }}">{{ app.status }}</span>
     </h2>
     <div class="flex">
-        <a class="btn btn-primary" href="https://{{ app.name }}.68.221.16.224.sslip.io" target="_blank">Open ↗</a>
+        <a class="btn btn-primary" href="https://{{ app.name }}.{{ base_domain }}" target="_blank">Open ↗</a>
         <button class="btn btn-secondary" onclick="redeployApp()" id="redeploy-btn">↻ Redeploy</button>
         <button class="btn btn-secondary" onclick="location.reload()">Refresh</button>
         {% if app.status == 'running' %}
@@ -52,6 +52,7 @@
 <div class="tabs">
     <button class="tab active" data-tab="config">Configuration</button>
     <button class="tab" data-tab="domains">Domains</button>
+    <button class="tab" data-tab="addons">Add-ons</button>
     <button class="tab" data-tab="releases">Releases</button>
     <button class="tab" data-tab="logs">Logs</button>
 </div>
@@ -92,12 +93,37 @@
                 <button class="btn btn-danger btn-sm" onclick="removeDomain('{{ d }}')">Remove</button>
             </div>
         {% else %}
-            <p class="muted" style="padding:0.5rem 0;">No custom domains — your app is on <code style="font-family:var(--mono);">{{ app.name }}.68.221.16.224.sslip.io</code>.</p>
+            <p class="muted" style="padding:0.5rem 0;">No custom domains — your app is on <code style="font-family:var(--mono);">{{ app.name }}.{{ base_domain }}</code>.</p>
         {% endfor %}
         </div>
         <div class="flex mt-1">
             <input type="text" id="domain-input" placeholder="app.example.com" class="field" style="flex:1;">
             <button class="btn btn-success" onclick="addDomain()">Add domain</button>
+        </div>
+    </div>
+</div>
+
+<!-- Add-ons -->
+<div class="tab-panel" id="panel-addons">
+    <div class="card">
+        <h2>Attached add-ons <span class="sub">Postgres / Redis</span></h2>
+        <p class="hint" style="margin-bottom:0.8rem;">
+            Attaching an add-on injects <code style="font-family:var(--mono);">DATABASE_URL</code> (Postgres) or
+            <code style="font-family:var(--mono);">REDIS_URL</code> (Redis) into your app and restarts it.
+        </p>
+        <div id="addon-list">
+        {% for a in addons %}
+            <div class="flex" style="justify-content:space-between; padding:0.45rem 0; border-bottom:1px solid var(--bg);">
+                <code style="font-family:var(--mono); font-size:0.82rem;">{{ a.name }} <span class="muted">({{ a.kind }})</span></code>
+                <button class="btn btn-danger btn-sm" onclick="detachAddon('{{ a.name }}')">Detach</button>
+            </div>
+        {% else %}
+            <p class="muted" style="padding:0.5rem 0;">No add-ons attached. Create one in the <a href="/ui/addons">Add-ons</a> page first.</p>
+        {% endfor %}
+        </div>
+        <div class="flex mt-1">
+            <input type="text" id="addon-name" placeholder="addon name" class="field" style="flex:1;">
+            <button class="btn btn-success" onclick="attachAddon()">Attach add-on</button>
         </div>
     </div>
 </div>
@@ -242,6 +268,19 @@ function removeDomain(d) {
     if (!confirm('Remove domain "' + d + '"?')) return;
     api('DELETE', '/ui/apps/' + APP + '/domains/' + encodeURIComponent(d))
         .then(() => location.reload()).catch(e => toast(e.message, 'error'));
+}
+function attachAddon() {
+    const a = document.getElementById('addon-name').value.trim();
+    if (!a) { toast('Add-on name required', 'error'); return; }
+    api('POST', '/ui/apps/' + APP + '/addons/' + encodeURIComponent(a))
+        .then(() => { toast('Add-on attached — app restarted', 'success'); setTimeout(() => location.reload(), 1500); })
+        .catch(e => toast(e.message, 'error'));
+}
+function detachAddon(a) {
+    if (!confirm('Detach add-on "' + a + '"?')) return;
+    api('DELETE', '/ui/apps/' + APP + '/addons/' + encodeURIComponent(a))
+        .then(() => { toast('Add-on detached — app restarted', 'success'); setTimeout(() => location.reload(), 1500); })
+        .catch(e => toast(e.message, 'error'));
 }
 function rollback(v) {
     if (!confirm('Rollback to v' + v + '?')) return;

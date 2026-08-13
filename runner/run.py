@@ -1,7 +1,17 @@
 import socket, time
 import requests, docker
 
+import config
+
 client = docker.from_env()
+
+def _ensure_addon_network():
+    """Crée le réseau bridge reliant apps et add-ons (idempotent)."""
+    try:
+        client.networks.get(config.ADDON_NETWORK)
+    except docker.errors.NotFound:
+        client.networks.create(config.ADDON_NETWORK, driver="bridge")
+        print(f"[runner] Created network {config.ADDON_NETWORK}")
 
 def wait_healthy(port: int, timeout: int = 30) -> bool:
     """Poll http://localhost:port until it answers with status < 500, or timeout."""
@@ -31,17 +41,19 @@ def run_container(app_name: str, image: str, env_vars: dict, port: int = None) -
         old.remove()
     except:
         pass
+    _ensure_addon_network()
     client.containers.run(
         image,
         name=container_name,
         detach=True,
-        ports={"8000/tcp": port},
+        network=config.ADDON_NETWORK,
+        ports={f"{config.CONTAINER_PORT}/tcp": (config.APP_BIND_HOST, port)},
         environment=env_vars,
         mem_limit="512m",
         nano_cpus=500_000_000,
         restart_policy={"Name": "unless-stopped"},
     )
-    print(f"[runner] Started {container_name} on port {port}")
+    print(f"[runner] Started {container_name} on port {port} (bind {config.APP_BIND_HOST})")
     return port
 
 def stop_container(app_name: str):

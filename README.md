@@ -8,7 +8,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green?logo=fastapi)
 ![Docker](https://img.shields.io/badge/Docker-24+-blue?logo=docker)
 ![Caddy](https://img.shields.io/badge/Caddy-2.11-orange)
-![Tests](https://img.shields.io/badge/tests-11%2F11%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-27%2F27%20passing-brightgreen)
 ![HTTPS](https://img.shields.io/badge/HTTPS-Let's%20Encrypt-blue)
 
 **Built as a PFA project at ENSA Khouribga — Option SCIL**
@@ -78,7 +78,10 @@ git push ───────────────────────�
 | Automatic HTTPS (Let's Encrypt) | ✅ |
 | Custom subdomain per app | ✅ |
 | Custom domains (DNS + auto HTTPS) | ✅ |
-| Multi-user accounts + API tokens | ✅ |
+| Multi-user accounts + API tokens (hashés en base) | ✅ |
+| Rotation + expiration des tokens API | ✅ |
+| CSRF protection (Web UI) | ✅ |
+| Rate-limiting sur l'auth (brute-force) | ✅ |
 | Encrypted environment variables | ✅ |
 | Real-time log streaming (SSE) | ✅ |
 | CPU / RAM metrics | ✅ |
@@ -86,9 +89,11 @@ git push ───────────────────────�
 | Release history + one-click rollback | ✅ |
 | Container resource limits | ✅ |
 | Health checks + auto-restart | ✅ |
+| Add-ons Postgres / Redis attachables | ✅ |
+| Backup DB + clé Fernet | ✅ |
 | Web UI dashboard | ✅ |
 | REST API + Swagger docs | ✅ |
-| Full CLI (12 commands) | ✅ |
+| Full CLI (24 commands) | ✅ |
 | systemd service (survives reboot) | ✅ |
 
 ---
@@ -105,7 +110,7 @@ git push ───────────────────────�
 | CLI | Python + Click |
 | Web UI | Jinja2 + HTMX + Chart.js |
 | Infrastructure | Azure VM — Ubuntu 24.04 |
-| Tests | pytest (11/11 passing) |
+| Tests | pytest (27/27 passing) |
 
 ---
 
@@ -133,6 +138,13 @@ git push ───────────────────────�
 | `myplatform domains <app>` | List custom domains |
 | `myplatform domains:add <app> DOMAIN` | Attach a custom domain |
 | `myplatform domains:remove <app> DOMAIN` | Remove a custom domain |
+| `myplatform addons` | List your add-ons |
+| `myplatform addons:create <name> postgres\|redis` | Provision a database add-on |
+| `myplatform addons:destroy <name>` | Destroy an add-on |
+| `myplatform addons:attach <app> <addon>` | Attach an add-on to an app |
+| `myplatform addons:detach <app> <addon>` | Detach an add-on from an app |
+| `myplatform token:rotate` | Issue a new API token (old one revoked) |
+| `myplatform token:revoke` | Revoke the current API token |
 
 ---
 
@@ -179,8 +191,10 @@ Full interactive docs: `http://YOUR-IP:8000/docs`
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/auth/register` | Create an account (returns API token) |
-| `POST` | `/auth/login` | Log in (returns API token) |
+| `POST` | `/auth/login` | Log in (returns a new API token, rotation) |
 | `GET` | `/auth/me` | Current user |
+| `POST` | `/auth/rotate-token` | Issue a new token (revokes the old one) |
+| `POST` | `/auth/revoke-token` | Revoke the current token |
 | `POST` | `/apps/deploy` | Deploy an app from git repo |
 | `GET` | `/apps` | List your apps |
 | `GET` | `/apps/{name}` | Get app details |
@@ -198,6 +212,12 @@ Full interactive docs: `http://YOUR-IP:8000/docs`
 | `GET` | `/apps/{name}/domains` | List custom domains |
 | `DELETE` | `/apps/{name}/domains/{domain}` | Remove a custom domain |
 | `POST` | `/apps/{name}/deploy-zero-downtime` | Blue-green deploy |
+| `POST` | `/addons` | Create an add-on (postgres/redis) |
+| `GET` | `/addons` | List your add-ons |
+| `DELETE` | `/addons/{name}` | Destroy an add-on |
+| `POST` | `/apps/{name}/addons/{addon}` | Attach an add-on to an app |
+| `DELETE` | `/apps/{name}/addons/{addon}` | Detach an add-on from an app |
+| `GET` | `/apps/{name}/addons` | List add-ons attached to an app |
 | `GET` | `/audit` | Audit log (global) |
 | `GET` | `/audit/{app}` | Audit log per app |
 
@@ -206,13 +226,53 @@ Full interactive docs: `http://YOUR-IP:8000/docs`
 ## Security
 
 - **Multi-user**: every user owns their apps — access control on all API + UI routes
-- **API tokens**: opaque bearer tokens for the CLI (`myplatform login`), PBKDF2-SHA256 password hashing
-- **Env vars encrypted at rest** using Fernet (AES-128-CBC)
+- **API tokens**: opaque bearer tokens, **stored hashed** (SHA-256) — never in plaintext; PBKDF2-SHA256 password hashing
+- **Token rotation**: each login / `token:rotate` issues a new token and revokes the previous one
+- **Token expiration**: configurable TTL (default 90 days, `MINIHEROKU_TOKEN_TTL_DAYS`)
+- **CSRF protection** on the Web UI (double-submit cookie + `X-CSRF-Token` header)
+- **Rate-limiting** on `/auth/login` and `/auth/register` (brute-force, configurable)
+- **Env vars encrypted at rest** using Fernet (AES-128-CBC); decrypt errors fail loudly instead of leaking garbage
 - **Fernet key stored OUTSIDE the repo** (`~/.mini-heroku/fernet.key`, mode 600)
+- **App containers bound to loopback** — only reachable through Caddy (no public random ports)
 - **Input validation**: app names (regex), repo URLs (HTTPS or local path), domains
 - **No secrets in logs** — all values masked as `***`
 - **Resource limits** per container (CPU + memory)
-- **Bandit audit**: 0 High severity issues
+- **Swagger docs disabled in production** (`MINIHEROKU_ENV=production`)
+
+---
+
+## Custom Domains (livrable du sujet)
+
+1. Buy/point a domain (or subdomain) — create an `A` (and `AAAA`) DNS record to the VM IP:
+   ```bash
+   demo.mycompany.com  A  68.221.16.224
+   ```
+2. Attach it to your app (API, CLI or Web UI → *Domains* tab):
+   ```bash
+   myplatform domains:add my-app demo.mycompany.com
+   ```
+3. Caddy adds it to the site config and **Let's Encrypt issues the HTTPS certificate automatically**.
+
+> `*.sslip.io` subdomains work out-of-the-box with no DNS setup — ideal for demos. A real custom
+> domain requires DNS records pointing to the VM. HTTPS certs are provisioned automatically
+> (validated via HTTP-01 challenge on the VM).
+
+---
+
+## Add-ons (Postgres / Redis)
+
+Provision a managed database and attach it to an app in seconds. Attaching injects
+`DATABASE_URL` (Postgres) or `REDIS_URL` (Redis) into the app and restarts it.
+
+```bash
+myplatform addons:create my-db postgres
+myplatform addons:create my-cache redis
+myplatform addons:attach my-app my-db
+myplatform addons:detach my-app my-db
+myplatform addons:destroy my-db
+```
+
+Add-ons run on an internal Docker network (`mh_addons`) — they are never exposed to the internet.
 
 ---
 
@@ -227,17 +287,25 @@ sudo journalctl -u caddy -f
 ```
 
 ### Backup
+Backup la DB + la clé Fernet en un seul snapshot cohérent (sqlite3 backup API) :
 ```bash
-mkdir -p ~/mini-heroku/backups
-cp ~/mini-heroku/mini-heroku.db \
-   ~/mini-heroku/backups/db-$(date +%Y%m%d-%H%M).db
+cd ~/mini-heroku && source venv/bin/activate
+python3 scripts/backup.py            # → ~/mini-heroku-backups/YYYYMMDD-HHMMSS/
+python3 scripts/backup.py --list     # liste les snapshots
 ```
+Cron conseillé :
+```bash
+30 3 * * *  cd ~/mini-heroku && python3 scripts/backup.py >> ~/mini-heroku-backups/backup.log 2>&1
+```
+> ⚠️ Sans backup, une perte de la VM = perte des données ET clé Fernet illisible
+> (les env vars chiffrées deviennent indéchiffrables). Sauvegardez aussi la clé hors VM.
 
 ### Run tests
 ```bash
 cd ~/mini-heroku && source venv/bin/activate
-pytest tests/test_e2e.py -v
-# Expected: 11 passed
+python3 -m pytest tests/test_auth.py tests/test_ops.py -v   # unitaires (sans Docker)
+# Expected: 27 passed
+python3 -m pytest tests/test_e2e.py -v                       # E2E (sur la VM)
 ```
 
 ### Add a new app
@@ -255,28 +323,34 @@ git push myplatform main
 mini-heroku/
 ├── api/
 │   ├── main.py        # FastAPI — tous les endpoints
-│   ├── security.py    # Auth, hash PBKDF2, tokens, validations
-│   └── ui.py          # Routes Web UI (login, apps, domains)
+│   ├── security.py    # Auth, hash PBKDF2/tokens, CSRF, validations
+│   ├── ratelimit.py   # Rate limiter in-memory (fenêtre glissante)
+│   └── ui.py          # Routes Web UI (login, apps, domains, add-ons)
 ├── builder/
 │   └── build.py       # Clone → docker build → push registry
 ├── runner/
 │   └── run.py         # Cycle de vie des containers Docker
 ├── proxy/
-│   └── caddy.py       # Génération dynamique du Caddyfile
+│   └── caddy.py       # Génération dynamique du Caddyfile (reconstruction propre)
 ├── cli/
-│   └── main.py        # CLI Click (register, login, domains, ...)
+│   └── main.py        # CLI Click (24 commandes)
 ├── db/
-│   └── models.py      # Modèles SQLAlchemy (App, Release, EnvVar, AuditLog, User, CustomDomain)
+│   └── models.py      # Modèles SQLAlchemy (App, Release, EnvVar, AuditLog, User, CustomDomain, Addon)
+├── scripts/
+│   └── backup.py      # Backup DB + clé Fernet (prêt pour cron)
+├── config.py          # Toutes les constantes configurables (env vars)
 ├── ui/
 │   └── templates/
 │       ├── base.html
 │       ├── index.html   # Dashboard apps
-│       ├── app.html     # Détail app (métriques, logs, env, releases, domains)
+│       ├── app.html     # Détail app (métriques, logs, env, releases, domains, add-ons)
 │       ├── deploy.html  # Formulaire déploiement
+│       ├── addons.html  # Gestion des add-ons
 │       ├── login.html   # Connexion
 │       └── register.html# Inscription
 ├── tests/
-│   ├── test_auth.py   # Tests unitaires auth + validation + domains (locaux)
+│   ├── test_auth.py   # Tests unitaires auth, tokens, rate-limit, CSRF, add-ons, backup
+│   ├── test_ops.py    # Tests Caddyfile, scale, env vars, docs
 │   └── test_e2e.py    # Tests E2E (sur la VM)
 ├── requirements.txt
 └── README.md

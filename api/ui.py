@@ -1,66 +1,98 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 import sys, os, docker as docker_sdk
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+import config
+BASE_DIR = config.BASE_DIR
 sys.path.insert(0, BASE_DIR)
 
-from db.models import get_db, App, Release, EnvVar, User
-from api.main import fernet, docker_client, get_env_vars, get_app_domains
+from db.models import get_db, App, Release, EnvVar, User, Addon, AppAddon
+from api.main import (fernet, docker_client, get_env_vars, get_app_domains,
+                      _rate_limit, login_limiter, register_limiter)
 from api.security import (
-    get_current_user, verify_password, hash_password, create_token, get_app_or_404,
+    get_current_user, verify_password, hash_password, create_token,
+    hash_token, token_ttl, create_csrf_token, get_app_or_404,
 )
 
 router = APIRouter(prefix="/ui")
 templates = Jinja2Templates(directory=os.environ.get(
     "MINIHEROKU_TEMPLATES", os.path.join(BASE_DIR, "ui", "templates")))
+templates.env.globals["base_domain"] = config.BASE_DOMAIN
+templates.env.globals["docs_enabled"] = not config.IS_PRODUCTION
+
+def _set_csrf(resp) -> None:
+    resp.set_cookie("mh_csrf", create_csrf_token(), samesite="lax", httponly=False)
+
+def _login_success(resp, user: User, db: Session) -> None:
+    raw_token = create_token()
+    user.token = hash_token(raw_token)
+    ttl = token_ttl()
+    user.token_expires_at = datetime.utcnow() + ttl if ttl else None
+    db.commit()
+    resp.set_cookie("mh_token", raw_token, httponly=True, samesite="lax",
+                    secure=config.IS_PRODUCTION)
+    _set_csrf(resp)
 
 # ── LOGIN / LOGOUT ───────────────────────────────────────
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
-    return templates.TemplateResponse(
-        request=request, name="login.html", context={"error": None})
+    resp = templates.TemplateResponse(
+        request=request, name="login.html",
+        context={"error": None, "csrf_token": create_csrf_token()})
+    _set_csrf(resp)
+    return resp
 
 @router.post("/login")
 async def ui_login(request: Request, db: Session = Depends(get_db)):
+    _rate_limit(login_limiter, request)
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
     password = form.get("password") or ""
     user = db.query(User).filter(User.email == email).first()
     if not user or not verify_password(password, user.password):
-        return templates.TemplateResponse(
+        resp = templates.TemplateResponse(
             request=request, name="login.html",
-            context={"error": "Invalid email or password"})
+            context={"error": "Invalid email or password",
+                     "csrf_token": create_csrf_token()})
+        _set_csrf(resp)
+        return resp
     resp = RedirectResponse(url="/ui/", status_code=303)
-    resp.set_cookie("mh_token", user.token, httponly=True, samesite="lax")
+    _login_success(resp, user, db)
     return resp
 
 @router.get("/register", response_class=HTMLResponse)
 def register_page(request: Request):
-    return templates.TemplateResponse(
-        request=request, name="register.html", context={"error": None})
+    resp = templates.TemplateResponse(
+        request=request, name="register.html",
+        context={"error": None, "csrf_token": create_csrf_token()})
+    _set_csrf(resp)
+    return resp
 
 @router.post("/register")
 async def ui_register(request: Request, db: Session = Depends(get_db)):
     from api.main import audit
+    _rate_limit(register_limiter, request)
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
     password = form.get("password") or ""
+    def _err(msg):
+        resp = templates.TemplateResponse(
+            request=request, name="register.html",
+            context={"error": msg, "csrf_token": create_csrf_token()})
+        _set_csrf(resp)
+        return resp
     if not email or "@" not in email:
-        return templates.TemplateResponse(
-            request=request, name="register.html",
-            context={"error": "Invalid email"})
+        return _err("Invalid email")
     if len(password) < 8:
-        return templates.TemplateResponse(
-            request=request, name="register.html",
-            context={"error": "Password must be at least 8 characters"})
+        return _err("Password must be at least 8 characters")
     if db.query(User).filter(User.email == email).first():
-        return templates.TemplateResponse(
-            request=request, name="register.html",
-            context={"error": "Email already registered"})
+        return _err("Email already registered")
     user = User(email=email, password=hash_password(password),
-                token=create_token())
+                token=hash_token(create_token()))
     db.add(user)
     db.commit()
     orphan = db.query(App).filter(App.owner_email.is_(None)).all()
@@ -69,13 +101,14 @@ async def ui_register(request: Request, db: Session = Depends(get_db)):
     db.commit()
     audit("register", "platform", {"email": email})
     resp = RedirectResponse(url="/ui/", status_code=303)
-    resp.set_cookie("mh_token", user.token, httponly=True, samesite="lax")
+    _login_success(resp, user, db)
     return resp
 
 @router.get("/logout")
 def ui_logout():
     resp = RedirectResponse(url="/ui/login", status_code=303)
     resp.delete_cookie("mh_token")
+    resp.delete_cookie("mh_csrf")
     return resp
 
 @router.get("/", response_class=HTMLResponse)
@@ -104,13 +137,49 @@ async def deploy_app(request: Request, db: Session = Depends(get_db),
         repo_url = data["repo_url"]
     return deploy(DR(), db, user)
 
+# ── ADD-ONS (UI) ─────────────────────────────────────────
+@router.get("/addons", response_class=HTMLResponse)
+def addons_page(request: Request, db: Session = Depends(get_db),
+                user: User = Depends(get_current_user)):
+    addons = db.query(Addon).filter(Addon.owner_email == user.email).all()
+    return templates.TemplateResponse(
+        request=request, name="addons.html",
+        context={"addons": addons, "user": user})
+
+@router.post("/addons")
+async def ui_addon_create(request: Request, db: Session = Depends(get_db),
+                          user: User = Depends(get_current_user)):
+    from api.main import create_addon, AddonRequest
+    data = await request.json()
+    return create_addon(AddonRequest(name=data["name"], kind=data["kind"]),
+                        db, user)
+
+@router.delete("/addons/{name}")
+def ui_addon_destroy(name: str, db: Session = Depends(get_db),
+                     user: User = Depends(get_current_user)):
+    from api.main import destroy_addon
+    return destroy_addon(name, db, user)
+
+@router.post("/apps/{name}/addons/{addon}")
+def ui_addon_attach(name: str, addon: str, db: Session = Depends(get_db),
+                    user: User = Depends(get_current_user)):
+    from api.main import attach_addon
+    return attach_addon(name, addon, db, user)
+
+@router.delete("/apps/{name}/addons/{addon}")
+def ui_addon_detach(name: str, addon: str, db: Session = Depends(get_db),
+                    user: User = Depends(get_current_user)):
+    from api.main import detach_addon
+    return detach_addon(name, addon, db, user)
+
+# ── APP DETAIL ───────────────────────────────────────────
 @router.get("/apps/{name}", response_class=HTMLResponse)
 def app_detail(name: str, request: Request, db: Session = Depends(get_db),
                user: User = Depends(get_current_user)):
     app = get_app_or_404(name, db, user)
     releases = db.query(Release).filter(
         Release.app_name == name).order_by(Release.version.desc()).all()
-    config = {r.key: "***" for r in db.query(EnvVar).filter(EnvVar.app_name == name).all()}
+    config_ = {r.key: "***" for r in db.query(EnvVar).filter(EnvVar.app_name == name).all()}
     metrics = None
     try:
         container = docker_client.containers.get(f"app-{name}")
@@ -131,15 +200,22 @@ def app_detail(name: str, request: Request, db: Session = Depends(get_db),
         }
     except Exception:
         pass
+    attached = [{"name": x.addon_name, "kind": ""} for x in
+                db.query(AppAddon).filter(AppAddon.app_name == name).all()]
+    addon_kinds = {a.name: a.kind for a in
+                   db.query(Addon).filter(Addon.owner_email == user.email).all()}
+    for att in attached:
+        att["kind"] = addon_kinds.get(att["name"], "")
     return templates.TemplateResponse(
         request=request,
         name="app.html",
         context={
             "app": app,
             "releases": releases,
-            "config": config,
+            "config": config_,
             "metrics": metrics,
             "domains": get_app_domains(name, db),
+            "addons": attached,
             "user": user,
         }
     )

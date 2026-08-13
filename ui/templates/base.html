@@ -283,9 +283,14 @@
             <a href="/ui/deploy">
                 <span class="icon">＋</span> Deploy App
             </a>
+            <a href="/ui/addons">
+                <span class="icon">🗄</span> Add-ons
+            </a>
+            {% if docs_enabled %}
             <a href="/docs" target="_blank">
                 <span class="icon">⑂</span> API Docs
             </a>
+            {% endif %}
         </nav>
         <div class="spacer"></div>
         <div class="userbox">
@@ -319,8 +324,14 @@ function toast(msg, type) {
     t.className = 'toast show' + (type ? ' ' + type : '');
     setTimeout(() => { t.className = 'toast'; }, 3200);
 }
+function getCookie(name) {
+    const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+    return m ? decodeURIComponent(m[2]) : null;
+}
 async function api(method, url, body) {
     const opts = {method: method, headers: {}};
+    const csrf = getCookie('mh_csrf');
+    if (csrf) opts.headers['X-CSRF-Token'] = csrf;
     if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
     const r = await fetch(url, opts);
     let data = null;

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import click, requests, json, sys, os
 
-API = "http://localhost:8000"
+API = os.environ.get("MINIHEROKU_API", "http://localhost:8000")
+BASE_DOMAIN = os.environ.get("MINIHEROKU_BASE_DOMAIN", "68.221.16.224.sslip.io")
+VM_IP = os.environ.get("MINIHEROKU_VM_IP", "68.221.16.224")
 CONFIG_FILE = os.path.expanduser("~/.myplatform.json")
 
 def load_config():
@@ -27,6 +29,9 @@ def api(method, path, **kwargs):
         r = getattr(requests, method)(f"{API}{path}", **kwargs)
         if r.status_code == 401:
             click.echo("Error: not authenticated — run 'myplatform login'", err=True)
+            sys.exit(1)
+        if r.status_code == 429:
+            click.echo("Error: rate limited — try again later", err=True)
             sys.exit(1)
         return r.json()
     except Exception as e:
@@ -74,6 +79,22 @@ def whoami():
     click.echo(f"Email: {r['email']}")
     click.echo(f"Registered: {r['created_at']}")
 
+@cli.command("token:rotate")
+def token_rotate():
+    """Issue a new API token (the old one is invalidated)"""
+    r = api("post", "/auth/rotate-token")
+    cfg = load_config()
+    cfg["token"] = r["token"]
+    save_config(cfg)
+    click.echo(f"-----> New token stored. Expires: {r.get('expires_at') or 'never'}")
+
+@cli.command("token:revoke")
+def token_revoke():
+    """Revoke the current API token immediately"""
+    api("post", "/auth/revoke-token")
+    save_config({})
+    click.echo("-----> Token revoked — logged out")
+
 @cli.command()
 @click.argument("name")
 @click.argument("repo_url")
@@ -85,7 +106,7 @@ def deploy(name, repo_url):
     if r.get("status") == "deployed":
         click.echo(f"-----> Deploy successful!")
         click.echo(f"-----> Version: v{r['version']}")
-        click.echo(f"-----> URL: https://{name}.68.221.16.224.sslip.io")
+        click.echo(f"-----> URL: https://{name}.{BASE_DOMAIN}")
     else:
         click.echo(f"-----> Deploy failed: {r}", err=True)
         sys.exit(1)
@@ -178,7 +199,7 @@ def info(name):
     click.echo(f"Port:     {r['port']}")
     click.echo(f"Replicas: {r.get('replicas', 1)}")
     click.echo(f"Image:    {r['image']}")
-    click.echo(f"URL:      https://{r['name']}.68.221.16.224.sslip.io")
+    click.echo(f"URL:      https://{r['name']}.{BASE_DOMAIN}")
 
 @cli.command()
 @click.argument("name")
@@ -231,7 +252,7 @@ def domains_add(name, domain):
     """Attach a custom domain to an app (point DNS A/AAAA to the VM IP first)"""
     r = api("post", f"/apps/{name}/domains", json={"domain": domain})
     click.echo(f"-----> Domain {domain} added to {name}")
-    click.echo(f"-----> Point DNS: {domain} -> 68.221.16.224 (Let's Encrypt auto)")
+    click.echo(f"-----> Point DNS: {domain} -> {VM_IP} (Let's Encrypt auto)")
 
 @cli.command("domains:remove")
 @click.argument("name")
@@ -241,6 +262,48 @@ def domains_remove(name, domain):
     r = api("delete", f"/apps/{name}/domains/{domain}")
     click.echo(f"-----> Domain {domain} removed from {name}")
 
+# ── ADD-ONS ──────────────────────────────────────────────
+@cli.command("addons")
+def list_addons():
+    """List your add-ons"""
+    r = api("get", "/addons")
+    if not r:
+        click.echo("No add-ons.")
+        return
+    for a in r:
+        click.echo(f"{a['name']}\t{a['kind']}\t{a['status']}")
+
+@cli.command("addons:create")
+@click.argument("name")
+@click.argument("kind", type=click.Choice(["postgres", "redis"]))
+def addons_create(name, kind):
+    """Provision an add-on: myplatform addons:create mydb postgres"""
+    r = api("post", "/addons", json={"name": name, "kind": kind})
+    click.echo(f"-----> Created {kind} add-on {name}")
+    click.echo(f"-----> Connection URL: {r['url']}")
+
+@cli.command("addons:destroy")
+@click.argument("name")
+def addons_destroy(name):
+    """Destroy an add-on (detaches it from apps)"""
+    r = api("delete", f"/addons/{name}")
+    click.echo(f"-----> Destroyed add-on {name}")
+
+@cli.command("addons:attach")
+@click.argument("app")
+@click.argument("addon")
+def addons_attach(app, addon):
+    """Attach an add-on to an app (restarts the app with the new env var)"""
+    r = api("post", f"/apps/{app}/addons/{addon}")
+    click.echo(f"-----> Attached {addon} to {app} — env var {r['key']} set and app restarted")
+
+@cli.command("addons:detach")
+@click.argument("app")
+@click.argument("addon")
+def addons_detach(app, addon):
+    """Detach an add-on from an app"""
+    r = api("delete", f"/apps/{app}/addons/{addon}")
+    click.echo(f"-----> Detached {addon} from {app} — app restarted")
 
 @cli.command("deploy:zero-downtime")
 @click.argument("name")
@@ -252,7 +315,7 @@ def deploy_zero_downtime(name):
         click.echo(f"-----> Blue-green deploy successful!")
         click.echo(f"-----> Old port: {r['old_port']} -> New port: {r['new_port']}")
         click.echo(f"-----> Downtime: {r['downtime']}")
-        click.echo(f"-----> URL: https://{name}.68.221.16.224.sslip.io")
+        click.echo(f"-----> URL: https://{name}.{BASE_DOMAIN}")
     else:
         click.echo(f"-----> Deploy failed: {r}", err=True)
 
