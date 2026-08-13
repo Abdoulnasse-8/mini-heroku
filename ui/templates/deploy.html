@@ -17,6 +17,11 @@
                 <input type="text" id="repo-url" placeholder="https://github.com/user/repo.git" required autocomplete="off">
                 <p class="hint">Any HTTPS git repo containing a Dockerfile. A <code>PORT=8000</code> app is exposed automatically.</p>
             </div>
+            <div class="field">
+                <label for="dockerfile">Build file <span style="color:var(--muted); font-weight:400;">(optional)</span></label>
+                <input type="text" id="dockerfile" placeholder="Dockerfile" autocomplete="off">
+                <p class="hint">Repo-relative path to the Dockerfile when it is not at the root, e.g. <code>JEEproject/Dockerfile</code>.</p>
+            </div>
             <button type="submit" id="deploy-btn" class="btn btn-primary btn-lg btn-block">
                 Deploy Application
             </button>
@@ -50,13 +55,14 @@ form.addEventListener('submit', function (e) {
     e.preventDefault();
     const name = document.getElementById('app-name').value.trim();
     const repo = document.getElementById('repo-url').value.trim();
+    const df = document.getElementById('dockerfile').value.trim();
     if (!name || !repo) return;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Building & deploying…';
     result.innerHTML = '<div class="card" style="background:var(--bg); border-color:var(--border); padding:0.9rem 1rem;">' +
         '<p style="font-family:var(--mono); font-size:0.8rem; color:var(--muted); white-space:pre-wrap;">' +
-        '-----> Cloning ' + repo + '\n-----> Building Docker image…\n-----> Pushing to registry…\n-----> Starting container…</p></div>';
-    api('POST', '/ui/deploy', {name: name, repo_url: repo})
+        '-----> Cloning ' + repo + '\n-----> Building Docker image (dockerfile: ' + (df || 'Dockerfile') + ')…\n-----> Pushing to registry…\n-----> Starting container…</p></div>';
+    api('POST', '/ui/deploy', {name: name, repo_url: repo, dockerfile: df || null})
         .then(d => {
             result.innerHTML = '<div class="card" style="background:var(--success-soft); border-color:#a7f3d0; padding:1rem;">' +
                 '<p style="color:#065f46; font-weight:700;">✅ Deployed ' + d.app + ' (v' + d.version + ')</p>' +

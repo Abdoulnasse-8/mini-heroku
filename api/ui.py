@@ -144,6 +144,7 @@ async def deploy_app(request: Request, db: Session = Depends(get_db),
     class DR:
         name = data["name"]
         repo_url = data["repo_url"]
+        dockerfile = data.get("dockerfile") or None
     return deploy(DR(), db, user)
 
 # ── ADD-ONS (UI) ─────────────────────────────────────────

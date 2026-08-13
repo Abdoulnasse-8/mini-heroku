@@ -6,6 +6,7 @@ import socket
 import sys
 import os
 from datetime import datetime, timedelta
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -116,6 +117,7 @@ def startup():
 class DeployRequest(BaseModel):
     name: str
     repo_url: str
+    dockerfile: Optional[str] = None
 
 class ConfigRequest(BaseModel):
     key: str
@@ -416,10 +418,13 @@ def deploy(req: DeployRequest, db: Session = Depends(get_db),
            user: User = Depends(get_current_user)):
     name = validate_app_name(req.name)
     repo_url = validate_repo_url(req.repo_url)
+    dockerfile = req.dockerfile or "Dockerfile"
+    if os.path.isabs(dockerfile) or ".." in dockerfile.split("/"):
+        raise HTTPException(400, "dockerfile must be a repo-relative path")
     releases = db.query(Release).filter(Release.app_name == name).all()
     version = len(releases) + 1
     try:
-        image = build_and_push(repo_url, name, version)
+        image = build_and_push(repo_url, name, version, dockerfile)
     except Exception as e:
         audit("deploy", name, {"error": str(e)}, "error")
         raise HTTPException(502, f"Build failed: {e}")
@@ -432,13 +437,14 @@ def deploy(req: DeployRequest, db: Session = Depends(get_db),
     app_row = db.query(App).filter(App.name == name).first()
     if not app_row:
         app_row = App(name=name, owner_email=user.email, repo_url=repo_url,
-                      status="running", port=port, image=image)
+                      dockerfile=dockerfile, status="running", port=port, image=image)
         db.add(app_row)
     else:
         if app_row.owner_email not in (None, user.email):
             raise HTTPException(403, "You do not own this app")
         app_row.owner_email = user.email
         app_row.repo_url = repo_url
+        app_row.dockerfile = dockerfile
         app_row.status = "running"
         app_row.port = port
         app_row.image = image
@@ -767,7 +773,7 @@ def deploy_zero_downtime(name: str, db: Session = Depends(get_db),
     ).order_by(Release.version.desc()).first()
     new_version = (latest.version if latest else 0) + 1
     try:
-        new_image = build_and_push(a.repo_url, name, new_version)
+        new_image = build_and_push(a.repo_url, name, new_version, a.dockerfile or "Dockerfile")
     except Exception as e:
         audit("deploy-zero-downtime", name, {"error": str(e)}, "error")
         raise HTTPException(502, f"Build failed: {e}")

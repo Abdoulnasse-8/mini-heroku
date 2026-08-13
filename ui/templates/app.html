@@ -41,6 +41,11 @@
         <div class="v">{{ app.port if app.port else '—' }}</div>
         <div class="bar"><div style="width:100%; background:var(--warning);"></div></div>
     </div>
+    <div class="metric">
+        <div class="k">Dockerfile</div>
+        <div class="v" style="font-size:0.8rem;">{{ app.dockerfile if app.dockerfile else 'Dockerfile' }}</div>
+        <div class="bar"><div style="width:100%; background:var(--primary);"></div></div>
+    </div>
 </div>
 
 <div class="card">

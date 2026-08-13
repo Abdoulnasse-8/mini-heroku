@@ -2,9 +2,14 @@ import subprocess, os, shutil
 
 REGISTRY = "localhost:5000"
 
-def build_and_push(repo_url: str, app_name: str, version: int) -> str:
+def build_and_push(repo_url: str, app_name: str, version: int,
+                   dockerfile: str = "Dockerfile") -> str:
     build_dir = f"/tmp/build-{app_name}"
     image_tag = f"{REGISTRY}/{app_name}:v{version}"
+
+    # Sécurité : le chemin du Dockerfile doit être relatif au repo (pas de remontée)
+    if not dockerfile or os.path.isabs(dockerfile) or ".." in dockerfile.split("/"):
+        raise Exception(f"Invalid Dockerfile path: {dockerfile!r}")
 
     print(f"[builder] Cloning {repo_url}...")
     if os.path.exists(build_dir):
@@ -15,11 +20,16 @@ def build_and_push(repo_url: str, app_name: str, version: int) -> str:
     if not os.path.exists(f"{build_dir}/Dockerfile"):
         raise Exception(f"No Dockerfile found in {repo_url}")
 
-    print(f"[builder] Building image {image_tag}...")
+    dockerfile_path = os.path.join(build_dir, dockerfile)
+    if not os.path.exists(dockerfile_path):
+        raise Exception(f"Dockerfile not found at {dockerfile} in {repo_url}")
+
+    print(f"[builder] Building image {image_tag} (dockerfile={dockerfile})...")
     result = subprocess.run(
         ["/usr/bin/docker", "build",
          "--memory", "2g",
          "--cpu-quota", "150000",
+         "-f", dockerfile_path,
          "-t", image_tag, build_dir],
         capture_output=True, text=True, timeout=600
     )

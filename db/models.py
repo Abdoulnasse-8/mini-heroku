@@ -19,6 +19,7 @@ class App(Base):
     owner_email   = Column(String, nullable=True)  # propriétaire (NULL = legacy)
     repo_url      = Column(String, nullable=True)  # source git du déploiement
     status        = Column(String, default="stopped")
+    dockerfile    = Column(String, default="Dockerfile")  # chemin relatif (ex: JEEproject/Dockerfile)
     port          = Column(Integer)
     image         = Column(String)
     replicas      = Column(Integer, default=1)
@@ -85,6 +86,10 @@ def _migrate():
         cols = {r[1] for r in conn.execute(text("PRAGMA table_info(apps)"))}
         if "replica_ports" not in cols:
             conn.execute(text("ALTER TABLE apps ADD COLUMN replica_ports TEXT"))
+            conn.commit()
+        cols = {r[1] for r in conn.execute(text("PRAGMA table_info(apps)"))}
+        if "dockerfile" not in cols:
+            conn.execute(text("ALTER TABLE apps ADD COLUMN dockerfile VARCHAR"))
             conn.commit()
         ucols = {r[1] for r in conn.execute(text("PRAGMA table_info(users)"))}
         if "created_at" not in ucols:
