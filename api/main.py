@@ -656,6 +656,7 @@ def restart(name: str, db: Session = Depends(get_db),
         audit("restart", name, {"error": "health check failed"}, "error")
         raise HTTPException(502, "App did not become healthy within 30s after restart")
     a.port = port
+    a.status = "running"
     replica_ports = _restore_replicas(a, env_vars)
     a.replica_ports = _json.dumps(replica_ports) if replica_ports else None
     db.commit()
