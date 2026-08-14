@@ -605,6 +605,46 @@ def scale(name: str, req: ScaleRequest, db: Session = Depends(get_db),
     return {"status": "scaled", "app": name, "replicas": req.replicas, "ports": ports}
 
 # ── RESTART ──────────────────────────────────────────────
+def _stop_all_containers(app_name: str):
+    """Arrête et supprime le container principal + tous les réplicas."""
+    for i in range(10):
+        try:
+            c = docker_client.containers.get(f"app-{app_name}-replica-{i}")
+            c.stop(); c.remove()
+        except Exception:
+            pass
+    stop_container(app_name)
+
+
+def _restore_replicas(a: App, env_vars: dict) -> list:
+    """Recrée les réplicas d'une app scalée (même nombre que avant l'arrêt)."""
+    if not a.replica_ports:
+        return []
+    try:
+        n = len(_json.loads(a.replica_ports))
+    except Exception:
+        return []
+    ports = []
+    for i in range(n):
+        port = get_free_port()
+        cname = f"app-{a.name}-replica-{i}"
+        try:
+            old = docker_client.containers.get(cname)
+            old.stop(); old.remove()
+        except Exception:
+            pass
+        _ensure_addon_network()
+        docker_client.containers.run(
+            a.image, name=cname, detach=True,
+            network=config.ADDON_NETWORK,
+            ports={f"{config.CONTAINER_PORT}/tcp": (config.APP_BIND_HOST, port)},
+            environment=env_vars, mem_limit="256m", nano_cpus=250_000_000,
+            restart_policy={"Name": "unless-stopped"},
+        )
+        ports.append(port)
+    return ports
+
+
 @app.post("/apps/{name}/restart")
 def restart(name: str, db: Session = Depends(get_db),
             user: User = Depends(get_current_user)):
@@ -615,20 +655,27 @@ def restart(name: str, db: Session = Depends(get_db),
         stop_container(name)
         audit("restart", name, {"error": "health check failed"}, "error")
         raise HTTPException(502, "App did not become healthy within 30s after restart")
-    audit("restart", name, {"port": port})
-    return {"status": "restarted", "app": name, "port": port}
+    a.port = port
+    replica_ports = _restore_replicas(a, env_vars)
+    a.replica_ports = _json.dumps(replica_ports) if replica_ports else None
+    db.commit()
+    _refresh_caddy(db)
+    audit("restart", name, {"port": port, "replicas": len(replica_ports)})
+    return {"status": "restarted", "app": name, "port": port,
+            "replicas": len(replica_ports)}
 
 # ── STOP ─────────────────────────────────────────────────
 @app.post("/apps/{name}/stop")
 def stop(name: str, db: Session = Depends(get_db),
          user: User = Depends(get_current_user)):
     get_app_or_404(name, db, user)
-    stop_container(name)
+    _stop_all_containers(name)
     a = db.query(App).filter(App.name == name).first()
     if a:
         a.status = "stopped"
         db.commit()
-    audit("stop", name, {})
+    _refresh_caddy(db)
+    audit("stop", name, {"containers": "all"})
     return {"status": "stopped", "app": name}
 
 # ── RELEASES ─────────────────────────────────────────────

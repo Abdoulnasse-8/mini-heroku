@@ -50,6 +50,45 @@ class _FakeClient:
     containers = _FakeContainers()
 
 
+class _FakeRunning:
+    def __init__(self, stats):
+        self.stats = stats
+
+    def stop(self):
+        pass
+
+    def remove(self):
+        self.stats["removed"] += 1
+
+
+class _FakeContainersTracked:
+    def __init__(self, stats):
+        self.stats = stats
+        self.running = {}
+        self.started = []
+
+    def run(self, *a, **k):
+        name = k.get("name")
+        if name:
+            self.running[name] = _FakeRunning(self.stats)
+            self.started.append(name)
+        return None
+
+    def get(self, name):
+        import docker as docker_sdk
+        if name in self.running:
+            return self.running[name]
+        raise docker_sdk.errors.NotFound(f"{name} not found")
+
+    def list(self, *a, **k):
+        return []
+
+
+class _FakeClientTracked:
+    def __init__(self, containers):
+        self.containers = containers
+
+
 def _fake_docker(monkeypatch):
     import api.main as m
     monkeypatch.setattr("api.main._ensure_addon_network", lambda *a, **k: None)
@@ -114,6 +153,56 @@ def test_bad_encrypted_env_var_fails_loudly(client, monkeypatch):
     r = client.post("/apps/my-app/restart", headers=hdr(tok))
     assert r.status_code == 500
     assert "decrypt" in r.json()["detail"].lower()
+
+
+# ── STOP : arrête le main ET tous les réplicas ────────────
+def test_stop_removes_main_and_replicas(client, monkeypatch):
+    stats = {"removed": 0}
+    fc = _FakeContainersTracked(stats)
+    for i in range(3):
+        fc.running[f"app-my-app-replica-{i}"] = _FakeRunning(stats)
+    removed_main = []
+    monkeypatch.setattr("api.main.docker_client", _FakeClientTracked(fc))
+    monkeypatch.setattr("api.main.stop_container", lambda n: removed_main.append(n))
+    tok = register(client)
+    db = SessionLocal()
+    db.add(App(name="my-app", owner_email="alice@example.com",
+               status="running", port=3001, image="x:v1"))
+    db.commit()
+    db.close()
+    r = client.post("/apps/my-app/stop", headers=hdr(tok))
+    assert r.status_code == 200, r.text
+    assert removed_main == ["my-app"]
+    assert stats["removed"] == 3
+    db = SessionLocal()
+    a = db.query(App).filter(App.name == "my-app").first()
+    assert a.status == "stopped"
+    db.close()
+
+
+# ── RESTART : restaure les réplicas d'une app scalée ─────
+def test_restart_restores_replicas(client, monkeypatch):
+    stats = {"removed": 0}
+    fc = _FakeContainersTracked(stats)
+    monkeypatch.setattr("api.main._ensure_addon_network", lambda *a, **k: None)
+    monkeypatch.setattr("api.main.run_container", lambda n, im, ev, p=None: 3001)
+    monkeypatch.setattr("api.main.wait_healthy", lambda p, timeout=30: True)
+    monkeypatch.setattr("api.main.docker_client", _FakeClientTracked(fc))
+    tok = register(client)
+    db = SessionLocal()
+    db.add(App(name="my-app", owner_email="alice@example.com",
+               status="stopped", port=3001, image="x:v1",
+               replica_ports=json.dumps([3101])))
+    db.commit()
+    db.close()
+    r = client.post("/apps/my-app/restart", headers=hdr(tok))
+    assert r.status_code == 200, r.text
+    assert r.json()["replicas"] == 1
+    assert "app-my-app-replica-0" in fc.started
+    db = SessionLocal()
+    a = db.query(App).filter(App.name == "my-app").first()
+    assert a.replica_ports is not None
+    db.close()
 
 
 # ── PRODUCTION : /docs désactivé ─────────────────────────
