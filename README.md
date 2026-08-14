@@ -406,7 +406,7 @@ mini-heroku/
 
 <div align="center">
 
-**Built with ❤️ by Abdoul Nasser — ENSA Khouribga 2026**
+**Built with ❤️  by Abdoul Nasser Hamma Tinni — ENSA Khouribga 2026**
 
 *PFA — Génie Informatique — Option SCIL*
 
