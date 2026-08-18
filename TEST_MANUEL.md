@@ -1,3 +1,4 @@
+
 # 🧪 TEST MANUEL — Mini Heroku (à faire toi-même)
 
 > Guide pas-à-pas pour vérifier la plateforme à la main, en préparation de la soutenance.
@@ -171,3 +172,4 @@
 - Le `stop` arrête **tout** (main + réplicas) et retire l'app du Caddy ; le `restart` (bouton « Start ») restaure le scale d'avant. Testé : scale 2 → stop (site hors ligne, 0 container) → restart (3 containers, HTTPS OK).
 - Les apps Python qui n'utilisent que `print()` sans TTY n'affichent pas de logs (bufférisation) — les logs sont prouvés avec `cabinet-api` (Spring Boot).
 - Repos GitHub privés : rends le repo **public** avant un déploiement depuis GitHub (le builder clone en HTTPS).
+By Abdoul Nasser
