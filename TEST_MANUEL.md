@@ -84,7 +84,7 @@
   # → app-test-xxx + app-test-xxx-replica-0 + app-test-xxx-replica-1
   ```
 - [ ] Recharge l'URL HTTPS plusieurs fois → toujours 200 (Caddy balance entre les replicas)
-- [ ] **Remets à 1 replica** ⚠️ (important : le `stop` n'arrête pas les replicas !)
+- [ ] **Remets à 1 replica** ⚠️ (le `stop` arrête désormais main + réplicas, donc pas obligatoire — c'est juste pour retrouver un état simple)
 
 ---
 
@@ -130,9 +130,11 @@
 - [ ] Crée un rendez-vous pour ce patient
 - [ ] **Preuve de persistance** (le vrai test « base de données ») :
   ```bash
-  docker exec addon-cabinet-db psql "postgresql://postgres:$(sudo grep -o 'fernet' /dev/null 2>/dev/null; echo)@localhost:5432/cabinet-db" -c "select id,cin,nom from patients;"
+  docker exec -e PGPASSWORD="$(docker exec addon-cabinet-db printenv POSTGRES_PASSWORD)" \
+    addon-cabinet-db psql -U postgres -h localhost -d cabinet-db \
+    -c "select id,cin,nom from patients;"
   ```
-  → (ou plus simple, voir ci-dessous) Recharge la page après quelques secondes : le patient est toujours là
+  → une ligne par patient créé (le mot de passe est lu depuis l'environnement de l'add-on)
 - [ ] Recharge la page du frontend → le patient créé est toujours présent (données persistées dans Postgres)
 
 ---
@@ -166,6 +168,6 @@
 ## 🔍 Points connus à connaître (si un juge teste)
 
 - `cabinet-api` renvoie **403 sur `/`** : normal, c'est une API protégée (les endpoints `/api/...` répondent 200).
-- Le `stop` n'arrête pas les réplicas → toujours rescaler à 1 avant un stop.
+- Le `stop` arrête **tout** (main + réplicas) et retire l'app du Caddy ; le `restart` (bouton « Start ») restaure le scale d'avant. Testé : scale 2 → stop (site hors ligne, 0 container) → restart (3 containers, HTTPS OK).
 - Les apps Python qui n'utilisent que `print()` sans TTY n'affichent pas de logs (bufférisation) — les logs sont prouvés avec `cabinet-api` (Spring Boot).
 - Repos GitHub privés : rends le repo **public** avant un déploiement depuis GitHub (le builder clone en HTTPS).
