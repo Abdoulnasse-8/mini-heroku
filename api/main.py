@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import docker as docker_sdk
