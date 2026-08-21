@@ -172,4 +172,5 @@
 - Le `stop` arrête **tout** (main + réplicas) et retire l'app du Caddy ; le `restart` (bouton « Start ») restaure le scale d'avant. Testé : scale 2 → stop (site hors ligne, 0 container) → restart (3 containers, HTTPS OK).
 - Les apps Python qui n'utilisent que `print()` sans TTY n'affichent pas de logs (bufférisation) — les logs sont prouvés avec `cabinet-api` (Spring Boot).
 - Repos GitHub privés : rends le repo **public** avant un déploiement depuis GitHub (le builder clone en HTTPS).
+- Vérifié 2026-08-21 : `http://68.221.16.224:8000/` → landing 200 et `http://68.221.16.224:8000/ui/` → dashboard 200 (fix `RedirectResponse` import `api/main.py:12`).
 By Abdoul Nasser
